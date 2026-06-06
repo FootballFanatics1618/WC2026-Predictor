@@ -157,7 +157,7 @@ export default function Leaderboard() {
             </div>
           )}
           <p style={{ fontSize: '0.8rem', color: 'var(--gray-500)', marginTop: '1rem' }}>
-            MP = Matches Predicted · CR = Correct Results (+3 pts each) · CS = Correct Scorelines (+5 pts total) · GB = Golden Boot Pick (+10 pts bonus)
+            MP = Matches Predicted · CR = Correct Results (+3 pts each) · CS = Correct Scorelines (+2 pts bonus) · GB = Golden Boot Pick (+10 pts bonus)
           </p>
           <p style={{ fontSize: '0.8rem', color: 'var(--gray-500)', marginTop: '0.25rem' }}>
             Ranking: Points → CS → CR (Final day: Points → GB → CS → CR) · Auto-refreshes every 30s

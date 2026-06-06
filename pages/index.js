@@ -1,12 +1,11 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/router'
+import Image from 'next/image'
 import Navbar from '../components/Navbar'
 import { supabase } from '../lib/supabase'
 
 export default function Home() {
   const [user, setUser] = useState(null)
-  const router = useRouter()
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -17,9 +16,12 @@ export default function Home() {
   return (
     <>
       <Navbar user={user} />
-      <div className="page" style={{ textAlign: 'center', paddingTop: '5rem' }}>
-        <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>⚽</div>
-        <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '3.5rem', color: 'var(--gold)', letterSpacing: '0.06em', marginBottom: '1rem' }}>
+      <div className="page" style={{ textAlign: 'center', paddingTop: '4rem' }}>
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '1.5rem' }}>
+          <Image src="/ff-logo.jpg" alt="Football Fanatics" width={100} height={100} style={{ borderRadius: '50%', objectFit: 'cover', border: '3px solid var(--gold)' }} />
+        </div>
+        <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.1rem', color: 'var(--gray-500)', letterSpacing: '0.12em', marginBottom: '0.5rem', textTransform: 'uppercase' }}>Football Fanatics</div>
+        <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '3.5rem', color: 'var(--gold)', letterSpacing: '0.06em', marginBottom: '0.75rem' }}>
           WORLD CUP 2026
         </h1>
         <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '2rem', color: 'var(--white)', letterSpacing: '0.04em', marginBottom: '1.5rem' }}>
@@ -51,7 +53,7 @@ export default function Home() {
           </div>
           <div className="card" style={{ textAlign: 'center' }}>
             <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>⚡</div>
-            <div style={{ fontWeight: 700, marginBottom: '0.25rem' }}>+5 pts</div>
+            <div style={{ fontWeight: 700, marginBottom: '0.25rem' }}>+2 pts bonus</div>
             <div style={{ fontSize: '0.85rem', color: 'var(--gray-500)' }}>Correct scoreline</div>
           </div>
           <div className="card-gold" style={{ textAlign: 'center' }}>
