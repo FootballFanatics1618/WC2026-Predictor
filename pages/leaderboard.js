@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import Navbar from '../components/Navbar'
+import FlagImg from '../components/FlagImg'
 import { supabase } from '../lib/supabase'
 
 export default function Leaderboard() {
@@ -7,11 +8,9 @@ export default function Leaderboard() {
   const [profile, setProfile] = useState(null)
   const [table, setTable] = useState([])
   const [loading, setLoading] = useState(true)
-  const [isFinalDay, setIsFinalDay] = useState(false)
 
   useEffect(() => {
     init()
-    // Auto-refresh every 30 seconds
     const interval = setInterval(fetchTable, 30000)
     return () => clearInterval(interval)
   }, [])
@@ -19,43 +18,32 @@ export default function Leaderboard() {
   async function init() {
     const { data: { session } } = await supabase.auth.getSession()
     setUser(session?.user ?? null)
-
     if (session?.user) {
       const { data } = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
       setProfile(data)
     }
-
     await fetchTable()
   }
 
   async function fetchTable() {
-    // Fetch all profiles with their prediction aggregates
-    const { data: profiles } = await supabase.from('profiles').select('id, username, golden_boot_pick')
+    const { data: profiles } = await supabase.from('profiles').select('id, username, golden_boot_pick, golden_boot_correct')
     const { data: predictions } = await supabase.from('predictions').select('*')
-
     if (!profiles) return
 
-    // Compute stats per user
     const rows = profiles.map(p => {
-      const userPreds = (predictions || []).filter(pr => pr.user_id === p.id)
+      const userPreds = (predictions || []).filter(pr => pr.user_id === p.id && pr.match_id !== 9999)
+      const gbPred = (predictions || []).find(pr => pr.user_id === p.id && pr.match_id === 9999)
       const matchesPredicted = userPreds.length
       const correctResults = userPreds.filter(pr => pr.is_result_correct).length
       const correctScorelines = userPreds.filter(pr => pr.is_score_correct).length
-      const points = userPreds.reduce((sum, pr) => sum + (pr.points_earned || 0), 0)
-
+      const points = (predictions || []).filter(pr => pr.user_id === p.id).reduce((sum, pr) => sum + (pr.points_earned || 0), 0)
       return {
-        id: p.id,
-        username: p.username,
-        goldenBoot: p.golden_boot_pick,
-        matchesPredicted,
-        correctResults,
-        correctScorelines,
-        points,
+        id: p.id, username: p.username, goldenBoot: p.golden_boot_pick,
+        goldenBootCorrect: p.golden_boot_correct || false,
+        matchesPredicted, correctResults, correctScorelines, points,
       }
     })
 
-    // Sort: Points DESC, then CS DESC, then CR DESC
-    // (On final day when goldenBoot is resolved, sort by Points, GB correct, CS, CR)
     rows.sort((a, b) => {
       if (b.points !== a.points) return b.points - a.points
       if (b.correctScorelines !== a.correctScorelines) return b.correctScorelines - a.correctScorelines
@@ -101,8 +89,10 @@ export default function Leaderboard() {
               <div style={{ fontFamily: 'var(--font-display)', fontSize: '2rem', color: 'var(--white)' }}>{myRow.correctScorelines}</div>
             </div>
             <div>
-              <span style={{ color: 'var(--gray-500)', fontSize: '0.85rem' }}>Golden Boot</span>
-              <div style={{ fontWeight: 600, color: 'var(--gold)' }}>{myRow.goldenBoot || '—'}</div>
+              <span style={{ color: 'var(--gray-500)', fontSize: '0.85rem' }}>Golden Boot Pick</span>
+              <div style={{ fontWeight: 600, color: myRow.goldenBootCorrect ? 'var(--gold)' : 'var(--white)', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}>
+                {myRow.goldenBootCorrect ? '🥇 ' : ''}{myRow.goldenBoot || '—'}
+              </div>
             </div>
           </div>
         )}
@@ -131,11 +121,9 @@ export default function Leaderboard() {
                     return (
                       <tr key={row.id} style={isMe ? { background: 'rgba(245,200,66,0.06)' } : {}}>
                         <td>
-                          {rank <= 3 ? (
-                            <span style={{ fontSize: '1.1rem' }}>{medalEmoji(rank)}</span>
-                          ) : (
-                            <span style={{ color: 'var(--gray-500)', fontSize: '0.9rem' }}>{rank}</span>
-                          )}
+                          {rank <= 3
+                            ? <span style={{ fontSize: '1.1rem' }}>{medalEmoji(rank)}</span>
+                            : <span style={{ color: 'var(--gray-500)', fontSize: '0.9rem' }}>{rank}</span>}
                         </td>
                         <td>
                           <span style={{ fontWeight: isMe ? 700 : 400, color: isMe ? 'var(--gold)' : 'var(--white)' }}>
@@ -148,7 +136,9 @@ export default function Leaderboard() {
                         <td style={{ textAlign: 'center', fontWeight: 700, color: rank === 1 ? 'var(--gold)' : 'var(--white)', fontFamily: 'var(--font-display)', fontSize: '1.1rem' }}>
                           {row.points}
                         </td>
-                        <td style={{ fontSize: '0.85rem', color: 'var(--gray-500)' }}>{row.goldenBoot || '—'}</td>
+                        <td style={{ fontSize: '0.85rem', color: row.goldenBootCorrect ? 'var(--gold)' : 'var(--gray-500)' }}>
+                          {row.goldenBoot || '—'} {row.goldenBootCorrect && '🥇'}
+                        </td>
                       </tr>
                     )
                   })}
