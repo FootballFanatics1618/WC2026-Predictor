@@ -4,7 +4,7 @@ import Navbar from '../components/Navbar'
 import { supabase } from '../lib/supabase'
 import { format, parseISO } from 'date-fns'
 
-const ADMIN_EMAILS = ['your-email@gmail.com'] // ← CHANGE THIS
+const ADMIN_EMAILS = ['test123@gmail.com'] // ← CHANGE THIS
 
 const STAGE_ORDER = ['Group Stage','Round of 32','Round of 16','Quarter-final','Semi-final','3rd Place Play-off','Final']
 
