@@ -82,7 +82,9 @@ export default function Admin() {
     setResultForm(prev => ({ ...prev, [matchId]: { ...prev[matchId], [field]: value } }))
   }
 
-  async function saveResult(match) {
+  // isEdit=true means we're correcting an already-saved result.
+  // We pass the live match object (which still has the old result) so we can reverse standings.
+  async function saveResult(match, isEdit = false) {
     const form = resultForm[match.id]
     if (!form?.result || form.scoreA === undefined || form.scoreB === undefined || form.scoreA === '' || form.scoreB === '') {
       alert('Fill in result, score A and score B.'); return
@@ -90,25 +92,25 @@ export default function Admin() {
     setSaving(s => ({ ...s, [match.id]: true }))
     const scoreA = parseInt(form.scoreA)
     const scoreB = parseInt(form.scoreB)
-
     const diff = scoreA - scoreB
+
+    // Score-vs-result consistency check
     if (form.result === 'teamA' && diff <= 0) { alert("Score doesn't match Team A win"); setSaving(s=>({...s,[match.id]:false})); return }
     if (form.result === 'teamB' && diff >= 0) { alert("Score doesn't match Team B win"); setSaving(s=>({...s,[match.id]:false})); return }
     if (form.result === 'draw' && diff !== 0) { alert("Score doesn't match Draw"); setSaving(s=>({...s,[match.id]:false})); return }
 
-    // ── 1. Save result to match ──────────────────────────────────────────────
+    // ── 1. Save result to match row ──────────────────────────────────────────
     const { error: mErr } = await supabase.from('matches').update({
       result: form.result, score_a: scoreA, score_b: scoreB,
     }).eq('id', match.id)
     if (mErr) {
-      alert(`❌ Could not save match result.\n\nError: ${mErr.message}\n\nMake sure you ran admin-rls-fix.sql in your Supabase SQL Editor.`)
+      alert(`❌ Could not save result.\n\n${mErr.message}\n\nCheck that admin-rls-fix.sql has been run in Supabase.`)
       setSaving(s=>({...s,[match.id]:false}))
       return
     }
 
-    // ── 2. Score every prediction for this match ─────────────────────────────
-    const { data: preds, error: pErr } = await supabase.from('predictions').select('*').eq('match_id', match.id)
-    if (pErr) console.error('Could not fetch predictions:', pErr.message)
+    // ── 2. Re-score every prediction for this match ──────────────────────────
+    const { data: preds } = await supabase.from('predictions').select('*').eq('match_id', match.id)
     let scoredCount = 0
     for (const pred of (preds || [])) {
       const rc = pred.predicted_result === form.result
@@ -117,39 +119,47 @@ export default function Admin() {
         is_result_correct: rc, is_score_correct: sc, points_earned: sc ? 5 : rc ? 3 : 0,
       }).eq('id', pred.id)
       if (!uErr) scoredCount++
-      else console.error('Prediction update failed:', uErr.message)
     }
 
-    // ── 3. Update group standings if group stage match ───────────────────────
+    // ── 3. Update group standings ──────────────────────────────────────────────
     if (match.stage === 'Group Stage' && match.group_name) {
-      const sErr = await updateGroupStandings(match, form.result, scoreA, scoreB)
-      if (sErr) console.error('Standings update failed:', sErr)
+      if (isEdit && match.result !== null) {
+        // Reverse the old result first, then apply the new one
+        const sErr = await updateGroupStandings(
+          match, form.result, scoreA, scoreB,
+          match.result, match.score_a, match.score_b   // old values to reverse
+        )
+        if (sErr) console.error('Standings edit failed:', sErr)
+      } else {
+        const sErr = await updateGroupStandings(match, form.result, scoreA, scoreB)
+        if (sErr) console.error('Standings update failed:', sErr)
+      }
     }
 
-    // ── 4. Knockout progression ──────────────────────────────────────────────
-    if (match.stage !== 'Group Stage') {
+    // ── 4. Knockout progression (only for new saves, not edits) ────────────────
+    if (!isEdit && match.stage !== 'Group Stage') {
       await resolveKnockoutProgression(match, form.result)
     }
 
-    // ── 5. After all 72 group games, propagate winners to R32 ────────────────
-    const { data: freshMatches } = await supabase.from('matches').select('*').order('match_date').order('match_time')
-    const groupDone = (freshMatches || []).filter(m => m.stage === 'Group Stage' && m.result !== null).length
-    if (match.stage === 'Group Stage' && groupDone === 72) {
-      await propagateAllGroupWinners(freshMatches || [])
+    // ── 5. After all 72 group games, propagate winners to R32 ───────────────
+    if (!isEdit && match.stage === 'Group Stage') {
+      const { data: freshMatches } = await supabase.from('matches').select('*').order('match_date').order('match_time')
+      const groupDone = (freshMatches || []).filter(m => m.stage === 'Group Stage' && m.result !== null).length
+      if (groupDone === 72) await propagateAllGroupWinners(freshMatches || [])
     }
 
-    setMessage(`✅ ${match.team_a} ${scoreA}–${scoreB} ${match.team_b} saved! ${scoredCount}/${preds?.length || 0} predictions scored.`)
+    setMessage(`✅ ${match.team_a} ${scoreA}–${scoreB} ${match.team_b} ${isEdit ? 'updated' : 'saved'}! ${scoredCount}/${preds?.length || 0} predictions scored.`)
     await Promise.all([loadMatches(), loadStandings()])
     setSaving(s => ({ ...s, [match.id]: false }))
     setShowCompleted(true)
   }
 
-  async function updateGroupStandings(match, result, scoreA, scoreB) {
+  // oldResult/oldScoreA/oldScoreB: when editing, pass the previous values to reverse them first
+  async function updateGroupStandings(match, result, scoreA, scoreB, oldResult = null, oldScoreA = null, oldScoreB = null) {
     const g = match.group_name
     const tA = match.team_a
     const tB = match.team_b
 
-    // Fetch only the columns we need (never select generated columns like goal_diff)
     const { data: rows, error: fetchErr } = await supabase
       .from('group_standings')
       .select('team,played,won,drawn,lost,goals_for,goals_against,points')
@@ -157,40 +167,61 @@ export default function Admin() {
       .in('team', [tA, tB])
     if (fetchErr) return fetchErr.message
 
-    const rowA = rows?.find(r => r.team === tA) || { played:0,won:0,drawn:0,lost:0,goals_for:0,goals_against:0,points:0 }
-    const rowB = rows?.find(r => r.team === tB) || { played:0,won:0,drawn:0,lost:0,goals_for:0,goals_against:0,points:0 }
+    let rowA = rows?.find(r => r.team === tA) || { played:0,won:0,drawn:0,lost:0,goals_for:0,goals_against:0,points:0 }
+    let rowB = rows?.find(r => r.team === tB) || { played:0,won:0,drawn:0,lost:0,goals_for:0,goals_against:0,points:0 }
 
+    // If editing, reverse the old result first so we don't double-count
+    if (oldResult !== null && oldScoreA !== null && oldScoreB !== null) {
+      rowA = { ...rowA,
+        played: rowA.played - 1,
+        goals_for: rowA.goals_for - oldScoreA,
+        goals_against: rowA.goals_against - oldScoreB,
+        won:   rowA.won   - (oldResult === 'teamA' ? 1 : 0),
+        drawn: rowA.drawn - (oldResult === 'draw'  ? 1 : 0),
+        lost:  rowA.lost  - (oldResult === 'teamB' ? 1 : 0),
+        points: rowA.points - (oldResult === 'teamA' ? 3 : oldResult === 'draw' ? 1 : 0),
+      }
+      rowB = { ...rowB,
+        played: rowB.played - 1,
+        goals_for: rowB.goals_for - oldScoreB,
+        goals_against: rowB.goals_against - oldScoreA,
+        won:   rowB.won   - (oldResult === 'teamB' ? 1 : 0),
+        drawn: rowB.drawn - (oldResult === 'draw'  ? 1 : 0),
+        lost:  rowB.lost  - (oldResult === 'teamA' ? 1 : 0),
+        points: rowB.points - (oldResult === 'teamB' ? 3 : oldResult === 'draw' ? 1 : 0),
+      }
+    }
+
+    // Apply new result
     const newA = {
       played: rowA.played + 1,
       goals_for: rowA.goals_for + scoreA,
       goals_against: rowA.goals_against + scoreB,
-      won: rowA.won, drawn: rowA.drawn, lost: rowA.lost, points: rowA.points,
+      won: rowA.won + (result === 'teamA' ? 1 : 0),
+      drawn: rowA.drawn + (result === 'draw' ? 1 : 0),
+      lost: rowA.lost + (result === 'teamB' ? 1 : 0),
+      points: rowA.points + (result === 'teamA' ? 3 : result === 'draw' ? 1 : 0),
     }
     const newB = {
       played: rowB.played + 1,
       goals_for: rowB.goals_for + scoreB,
       goals_against: rowB.goals_against + scoreA,
-      won: rowB.won, drawn: rowB.drawn, lost: rowB.lost, points: rowB.points,
+      won: rowB.won + (result === 'teamB' ? 1 : 0),
+      drawn: rowB.drawn + (result === 'draw' ? 1 : 0),
+      lost: rowB.lost + (result === 'teamA' ? 1 : 0),
+      points: rowB.points + (result === 'teamB' ? 3 : result === 'draw' ? 1 : 0),
     }
 
-    if (result === 'teamA') { newA.won++; newA.points += 3; newB.lost++ }
-    else if (result === 'teamB') { newB.won++; newB.points += 3; newA.lost++ }
-    else { newA.drawn++; newA.points++; newB.drawn++; newB.points++ }
-
-    // Use UPDATE per team — avoids primary-key conflicts across schema versions
-    // and never touches the generated goal_diff column
     const { error: errA } = await supabase
       .from('group_standings')
       .update({ ...newA, updated_at: new Date().toISOString() })
-      .eq('group_name', g)
-      .eq('team', tA)
+      .eq('group_name', g).eq('team', tA)
     if (errA) return errA.message
 
     const { error: errB } = await supabase
       .from('group_standings')
       .update({ ...newB, updated_at: new Date().toISOString() })
-      .eq('group_name', g)
-      .eq('team', tB)
+      .eq('group_name', g).eq('team', tB)
     return errB ? errB.message : null
   }
 
@@ -693,7 +724,7 @@ export default function Admin() {
                             style={{minWidth:'80px'}}
                             disabled={saving[m.id]}
                             onClick={async () => {
-                              await saveResult(m)
+                              await saveResult(m, true)
                               setEditingMatch(null)
                             }}
                           >
