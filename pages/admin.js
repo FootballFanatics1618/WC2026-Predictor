@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/router'
 import Navbar from '../components/Navbar'
 import { supabase } from '../lib/supabase'
+import { ALL_PLAYERS } from '../lib/data'
 import { format, parseISO, isToday } from 'date-fns'
 
 const ADMIN_EMAILS = ['your-email@gmail.com', 'admin589@gmail.com']
@@ -42,7 +43,10 @@ export default function Admin() {
   const [standings, setStandings] = useState([])
   const [resultForm, setResultForm] = useState({})
   const [saving, setSaving] = useState({})
-  const [goldenBootWinner, setGoldenBootWinner] = useState('')
+  // Golden boot search+dropdown
+  const [gbSearch, setGbSearch] = useState('')
+  const [gbPick, setGbPick] = useState('')
+  const [gbOpen, setGbOpen] = useState(false)
   const [gbSaving, setGbSaving] = useState(false)
   const [message, setMessage] = useState('')
   const [activeStage, setActiveStage] = useState('Group Stage')
@@ -144,29 +148,49 @@ export default function Admin() {
     const tA = match.team_a
     const tB = match.team_b
 
-    const { data: rows, error: fetchErr } = await supabase.from('group_standings')
-      .select('played,won,drawn,lost,goals_for,goals_against,points,group_name,team')
-      .eq('group_name', g).in('team', [tA, tB])
+    // Fetch only the columns we need (never select generated columns like goal_diff)
+    const { data: rows, error: fetchErr } = await supabase
+      .from('group_standings')
+      .select('team,played,won,drawn,lost,goals_for,goals_against,points')
+      .eq('group_name', g)
+      .in('team', [tA, tB])
     if (fetchErr) return fetchErr.message
 
     const rowA = rows?.find(r => r.team === tA) || { played:0,won:0,drawn:0,lost:0,goals_for:0,goals_against:0,points:0 }
     const rowB = rows?.find(r => r.team === tB) || { played:0,won:0,drawn:0,lost:0,goals_for:0,goals_against:0,points:0 }
 
-    const newA = { played: rowA.played+1, goals_for: rowA.goals_for+scoreA, goals_against: rowA.goals_against+scoreB,
-                   won: rowA.won, drawn: rowA.drawn, lost: rowA.lost, points: rowA.points }
-    const newB = { played: rowB.played+1, goals_for: rowB.goals_for+scoreB, goals_against: rowB.goals_against+scoreA,
-                   won: rowB.won, drawn: rowB.drawn, lost: rowB.lost, points: rowB.points }
+    const newA = {
+      played: rowA.played + 1,
+      goals_for: rowA.goals_for + scoreA,
+      goals_against: rowA.goals_against + scoreB,
+      won: rowA.won, drawn: rowA.drawn, lost: rowA.lost, points: rowA.points,
+    }
+    const newB = {
+      played: rowB.played + 1,
+      goals_for: rowB.goals_for + scoreB,
+      goals_against: rowB.goals_against + scoreA,
+      won: rowB.won, drawn: rowB.drawn, lost: rowB.lost, points: rowB.points,
+    }
 
-    if (result === 'teamA') { newA.won++; newA.points+=3; newB.lost++ }
-    else if (result === 'teamB') { newB.won++; newB.points+=3; newA.lost++ }
+    if (result === 'teamA') { newA.won++; newA.points += 3; newB.lost++ }
+    else if (result === 'teamB') { newB.won++; newB.points += 3; newA.lost++ }
     else { newA.drawn++; newA.points++; newB.drawn++; newB.points++ }
 
-    // Explicitly list only writable columns — never include generated columns like goal_diff
-    const { error: uErr } = await supabase.from('group_standings').upsert([
-      { group_name:g, team:tA, ...newA, updated_at: new Date().toISOString() },
-      { group_name:g, team:tB, ...newB, updated_at: new Date().toISOString() },
-    ], { onConflict: 'group_name,team' })
-    return uErr ? uErr.message : null
+    // Use UPDATE per team — avoids primary-key conflicts across schema versions
+    // and never touches the generated goal_diff column
+    const { error: errA } = await supabase
+      .from('group_standings')
+      .update({ ...newA, updated_at: new Date().toISOString() })
+      .eq('group_name', g)
+      .eq('team', tA)
+    if (errA) return errA.message
+
+    const { error: errB } = await supabase
+      .from('group_standings')
+      .update({ ...newB, updated_at: new Date().toISOString() })
+      .eq('group_name', g)
+      .eq('team', tB)
+    return errB ? errB.message : null
   }
 
   async function resolveKnockoutProgression(completedMatch, result) {
@@ -246,9 +270,9 @@ export default function Admin() {
   }
 
   async function awardGoldenBoot() {
-    if (!goldenBootWinner.trim()) { alert('Enter a player name.'); return }
+    if (!gbPick.trim()) { alert('Search and select a player first.'); return }
     setGbSaving(true)
-    const { data: winners } = await supabase.from('profiles').select('id').eq('golden_boot_pick', goldenBootWinner.trim())
+    const { data: winners } = await supabase.from('profiles').select('id').eq('golden_boot_pick', gbPick.trim())
     for (const w of (winners || [])) {
       await supabase.from('predictions').upsert({
         user_id: w.id, match_id: 9999,
@@ -257,7 +281,7 @@ export default function Admin() {
       }, { onConflict: 'user_id,match_id' })
       await supabase.from('profiles').update({ golden_boot_correct: true }).eq('id', w.id)
     }
-    setMessage(`🥇 Golden Boot: ${goldenBootWinner}! ${winners?.length || 0} players get +10 pts.`)
+    setMessage(`🥇 Golden Boot: ${gbPick}! ${winners?.length || 0} players get +10 pts.`)
     setGbSaving(false)
   }
 
@@ -320,11 +344,61 @@ export default function Admin() {
           <h2 style={{fontFamily:'var(--font-display)',fontSize:'1.3rem',color:'var(--gold)',marginBottom:'0.75rem'}}>🥇 AWARD GOLDEN BOOT</h2>
           <p style={{fontSize:'0.82rem',color:'var(--gray-500)',marginBottom:'0.75rem'}}>End of tournament only. Users who picked this player get +10 pts.</p>
           <div style={{display:'flex',gap:'0.75rem',alignItems:'flex-end',flexWrap:'wrap'}}>
-            <div style={{flex:1}}>
-              <label className="form-label">Golden Boot Winner (exact spelling)</label>
-              <input className="form-input" value={goldenBootWinner} onChange={e=>setGoldenBootWinner(e.target.value)} placeholder="e.g. Erling Haaland"/>
+            <div style={{flex:1,position:'relative'}}>
+              <label className="form-label">Search Golden Boot Winner</label>
+              <div style={{position:'relative'}}>
+                <input
+                  className="form-input"
+                  placeholder="Type player name to search..."
+                  value={gbSearch}
+                  onChange={e => { setGbSearch(e.target.value); setGbPick(''); setGbOpen(true) }}
+                  onFocus={() => setGbOpen(true)}
+                  onBlur={() => setTimeout(() => setGbOpen(false), 150)}
+                  style={{paddingRight: gbPick ? '2.2rem' : '0.9rem'}}
+                />
+                {gbPick && <span style={{position:'absolute',right:'0.7rem',top:'50%',transform:'translateY(-50%)',color:'#68d391',fontSize:'1rem'}}>✓</span>}
+              </div>
+              {gbPick && (
+                <div style={{fontSize:'0.78rem',color:'#68d391',marginTop:'0.3rem'}}>Selected: <strong>{gbPick}</strong></div>
+              )}
+              {gbOpen && (() => {
+                const players = [...ALL_PLAYERS].sort().filter(p => !gbSearch || p.toLowerCase().includes(gbSearch.toLowerCase()))
+                return players.length > 0 ? (
+                  <div style={{
+                    position:'absolute',top:'calc(100% + 4px)',left:0,right:0,
+                    background:'var(--gray-900)',border:'1px solid rgba(245,200,66,0.3)',
+                    borderRadius:'var(--radius)',maxHeight:'220px',overflowY:'auto',
+                    zIndex:300,boxShadow:'0 8px 32px rgba(0,0,0,0.6)'
+                  }}>
+                    {players.slice(0,60).map(p => (
+                      <div
+                        key={p}
+                        onMouseDown={() => { setGbPick(p); setGbSearch(p); setGbOpen(false) }}
+                        style={{
+                          padding:'0.5rem 0.9rem',cursor:'pointer',fontSize:'0.875rem',
+                          color: gbPick===p ? 'var(--gold)' : 'var(--white)',
+                          background: gbPick===p ? 'rgba(245,200,66,0.08)' : 'transparent',
+                          borderBottom:'1px solid rgba(255,255,255,0.04)',
+                          display:'flex',justifyContent:'space-between',
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.background='rgba(255,255,255,0.07)'}
+                        onMouseLeave={e => e.currentTarget.style.background = gbPick===p ? 'rgba(245,200,66,0.08)' : 'transparent'}
+                      >
+                        {p} {gbPick===p && <span>✓</span>}
+                      </div>
+                    ))}
+                    {players.length > 60 && (
+                      <div style={{padding:'0.4rem 0.9rem',fontSize:'0.78rem',color:'var(--gray-500)',textAlign:'center'}}>
+                        Type more to narrow ({players.length} players)
+                      </div>
+                    )}
+                  </div>
+                ) : null
+              })()}
             </div>
-            <button className="btn btn-primary" onClick={awardGoldenBoot} disabled={gbSaving}>{gbSaving?'Awarding...':'Award +10 pts'}</button>
+            <button className="btn btn-primary" onClick={awardGoldenBoot} disabled={gbSaving || !gbPick}>
+              {gbSaving ? 'Awarding...' : '🥇 Award +10 pts'}
+            </button>
           </div>
         </div>
 

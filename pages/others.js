@@ -45,7 +45,7 @@ export default function Others() {
     if (!byDate[m.match_date]) byDate[m.match_date] = []
     byDate[m.match_date].push(m)
   })
-  const dates = Object.keys(byDate).sort().reverse()
+  const dates = Object.keys(byDate).sort() // ascending: earliest date first
 
   function getPrediction(userId, matchId) {
     return allPredictions.find(p => p.user_id === userId && p.match_id === matchId)
