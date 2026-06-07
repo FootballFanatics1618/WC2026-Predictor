@@ -1,8 +1,12 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter } from 'next/router'
 import Navbar from '../components/Navbar'
+import GoldenBootPicker from '../components/GoldenBootPicker'
+import FlagImg from '../components/FlagImg'
 import { supabase } from '../lib/supabase'
 import { ALL_PLAYERS } from '../lib/data'
+import { useDragScroll } from '../hooks/useDragScroll'
+import { toIST } from '../lib/flags'
 import { format, parseISO, formatDistanceToNow, isToday } from 'date-fns'
 
 const ADMIN_EMAILS = process.env.NEXT_PUBLIC_ADMIN_EMAILS
@@ -62,6 +66,11 @@ export default function Admin() {
   const [syncLog, setSyncLog]       = useState([])
   const [syncLogLoading, setSyncLogLoading] = useState(false)
   const [lastSync, setLastSync]     = useState(null)
+
+  const dayPillRef = useRef(null)
+  const dayScrollRef = useDragScroll()
+
+  useEffect(() => { dayPillRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' }) }, [selectedDay])
 
   useEffect(() => { init() }, [])
 
@@ -202,6 +211,76 @@ export default function Admin() {
     }
 
     setMessage(`✅ ${match.team_a} ${scoreA}–${scoreB} ${match.team_b} ${isEdit ? 'updated' : 'saved'}! ${scoredCount}/${preds?.length || 0} predictions scored.`)
+    await Promise.all([loadMatches(), loadStandings()])
+    setSaving(s => ({ ...s, [match.id]: false }))
+    setShowCompleted(true)
+  }
+
+  async function resetResult(match) {
+    if (!confirm(`Reset result for ${match.team_a} vs ${match.team_b}?\n\nThis will clear the score and reset all predictions to null.`)) return
+    setSaving(s => ({ ...s, [match.id]: true }))
+
+    // 1. Clear match result
+    const { error: mErr } = await supabase.from('matches').update({
+      result: null, score_a: null, score_b: null,
+    }).eq('id', match.id)
+    if (mErr) {
+      alert(`❌ Could not reset result.\n\n${mErr.message}`)
+      setSaving(s => ({ ...s, [match.id]: false }))
+      return
+    }
+
+    // 2. Reset all predictions for this match
+    const { data: preds } = await supabase.from('predictions').select('*').eq('match_id', match.id)
+    let resetCount = 0
+    for (const pred of (preds || [])) {
+      const { error: uErr } = await supabase.from('predictions').update({
+        is_result_correct: null, is_score_correct: null, points_earned: null,
+      }).eq('id', pred.id)
+      if (!uErr) resetCount++
+    }
+
+    // 3. Reverse group standings (subtract old result only)
+    if (match.stage === 'Group Stage' && match.group_name && match.result) {
+      const g = match.group_name
+      const tA = match.team_a, tB = match.team_b
+      const r = match.result, sA = match.score_a, sB = match.score_b
+
+      const { data: rows } = await supabase
+        .from('group_standings')
+        .select('team,played,won,drawn,lost,goals_for,goals_against,points')
+        .eq('group_name', g).in('team', [tA, tB])
+
+      const rowA = rows?.find(x => x.team === tA)
+      const rowB = rows?.find(x => x.team === tB)
+
+      if (rowA) {
+        await supabase.from('group_standings').update({
+          played: rowA.played - 1,
+          goals_for: rowA.goals_for - sA,
+          goals_against: rowA.goals_against - sB,
+          won: rowA.won - (r === 'teamA' ? 1 : 0),
+          drawn: rowA.drawn - (r === 'draw' ? 1 : 0),
+          lost: rowA.lost - (r === 'teamB' ? 1 : 0),
+          points: rowA.points - (r === 'teamA' ? 3 : r === 'draw' ? 1 : 0),
+          updated_at: new Date().toISOString(),
+        }).eq('group_name', g).eq('team', tA)
+      }
+      if (rowB) {
+        await supabase.from('group_standings').update({
+          played: rowB.played - 1,
+          goals_for: rowB.goals_for - sB,
+          goals_against: rowB.goals_against - sA,
+          won: rowB.won - (r === 'teamB' ? 1 : 0),
+          drawn: rowB.drawn - (r === 'draw' ? 1 : 0),
+          lost: rowB.lost - (r === 'teamA' ? 1 : 0),
+          points: rowB.points - (r === 'teamB' ? 3 : r === 'draw' ? 1 : 0),
+          updated_at: new Date().toISOString(),
+        }).eq('group_name', g).eq('team', tB)
+      }
+    }
+
+    setMessage(`🔄 ${match.team_a} vs ${match.team_b} result reset. ${resetCount}/${preds?.length || 0} predictions cleared.`)
     await Promise.all([loadMatches(), loadStandings()])
     setSaving(s => ({ ...s, [match.id]: false }))
     setShowCompleted(true)
@@ -600,29 +679,25 @@ export default function Admin() {
         {/* ── RESULTS TAB ───────────────────────────────────────────────── */}
         {activeTab === 'results' && (
           <>
-            {/* ── Stage tabs ────────────────────────────────────────────────── */}
-            <div style={{overflowX:'auto',marginBottom:'1.5rem'}}>
-              <div className="tabs" style={{flexWrap:'nowrap',minWidth:'max-content'}}>
+            {/* ── Stage dropdown ──────────────────────────────────────────────── */}
+            <div style={{marginBottom:'1.5rem'}}>
+              <select
+                className="form-select"
+                value={activeStage}
+                onChange={(e)=>{ setActiveStage(e.target.value); setSelectedDay(null); setShowCompleted(false) }}
+                style={{fontSize:'0.85rem'}}
+              >
                 {STAGE_ORDER.map(s => {
                   const cnt = matches.filter(m=>m.stage===s&&m.result===null).length
-                  return (
-                    <button
-                      key={s}
-                      className={`tab-btn ${activeStage===s?'active':''}`}
-                      onClick={()=>{ setActiveStage(s); setSelectedDay(null); setShowCompleted(false) }}
-                      style={{whiteSpace:'nowrap',fontSize:'0.78rem',padding:'0.4rem 0.6rem'}}
-                    >
-                      {s} {cnt>0&&<span style={{background:'var(--danger)',color:'#fff',borderRadius:'99px',padding:'0 5px',fontSize:'0.68rem',marginLeft:'3px'}}>{cnt}</span>}
-                    </button>
-                  )
+                  return <option key={s} value={s}>{s}{cnt > 0 ? ` (${cnt} pending)` : ''}</option>
                 })}
-              </div>
+              </select>
             </div>
 
             {/* ── Day pills ─────────────────────────────────────────────────── */}
             {stageDates.length > 0 && (
-              <div style={{overflowX:'auto',marginBottom:'1.5rem'}}>
-                <div style={{display:'flex',gap:'0.5rem',flexWrap:'nowrap',minWidth:'max-content'}}>
+              <div style={{marginBottom:'1.5rem'}}>
+                <div ref={dayScrollRef} className="scroll-row">
                   {stageDates.map(dateStr => {
                     const pendingCount = stageMatches.filter(m => m.match_date===dateStr && m.result===null).length
                     const allDone = pendingCount === 0
@@ -630,28 +705,28 @@ export default function Admin() {
                     return (
                       <button
                         key={dateStr}
+                        ref={isActive ? dayPillRef : null}
                         onClick={()=>{ setSelectedDay(dateStr); setShowCompleted(false) }}
                         style={{
-                          padding:'0.4rem 0.9rem',
+                          padding:'0.4rem 0.85rem',
                           borderRadius:'99px',
-                          border:'1px solid',
-                          borderColor: isActive ? 'var(--gold)' : allDone ? 'var(--gray-700)' : 'var(--gray-600)',
-                          background: isActive ? 'rgba(245,200,66,0.12)' : allDone ? 'var(--gray-800)' : 'transparent',
-                          color: isActive ? 'var(--gold)' : allDone ? 'var(--gray-500)' : 'var(--gray-300)',
-                          fontSize:'0.78rem',
+                          border: isActive ? '1.5px solid var(--gold)' : '1px solid rgba(255,255,255,0.12)',
+                          background: isActive ? 'rgba(245,200,66,0.12)' : 'transparent',
+                          color: isActive ? 'var(--gold)' : 'var(--gray-300)',
+                          fontSize:'0.82rem',
+                          fontWeight: isActive ? 700 : 400,
                           cursor:'pointer',
                           whiteSpace:'nowrap',
                           display:'flex',
                           alignItems:'center',
-                          gap:'0.35rem',
-                          transition:'all 0.15s',
+                          gap:'5px',
                         }}
                       >
-                        {allDone && <span style={{color:'#68d391',fontSize:'0.7rem'}}>✓</span>}
-                        {format(parseISO(dateStr),'EEE d MMM')}
-                        {!allDone && (
-                          <span style={{background:'var(--danger)',color:'#fff',borderRadius:'99px',padding:'0 4px',fontSize:'0.65rem'}}>{pendingCount}</span>
-                        )}
+                        {format(parseISO(dateStr),'EEE, MMM d')}
+                        {allDone
+                          ? <span style={{fontSize:'0.85rem',color:'var(--success)'}}>✅</span>
+                          : <span style={{fontSize:'0.7rem',borderRadius:'99px',padding:'1px 6px',background:'rgba(255,255,255,0.08)',color:'var(--gray-500)'}}>{pendingCount}</span>
+                        }
                       </button>
                     )
                   })}
@@ -693,13 +768,13 @@ export default function Admin() {
                     {/* Match info row */}
                     <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:'0.5rem',flexWrap:'wrap',marginBottom:'0.75rem'}}>
                       <div>
-                        <div style={{fontWeight:700,fontSize:'1rem',marginBottom:'0.2rem'}}>
-                          {match.team_a}
-                          <span style={{color:'var(--gray-500)',fontWeight:400,margin:'0 0.4rem'}}>vs</span>
-                          {match.team_b}
+                        <div style={{fontWeight:700,fontSize:'1rem',marginBottom:'0.2rem',display:'flex',alignItems:'center',gap:'6px',flexWrap:'wrap'}}>
+                          <span style={{display:'inline-flex',alignItems:'center',gap:'6px'}}><FlagImg team={match.team_a} size={20} />{match.team_a}</span>
+                          <span style={{color:'var(--gray-500)',fontWeight:400}}>vs</span>
+                          <span style={{display:'inline-flex',alignItems:'center',gap:'6px'}}><FlagImg team={match.team_b} size={20} />{match.team_b}</span>
                         </div>
                         <div style={{fontSize:'0.75rem',color:'var(--gray-500)'}}>
-                          {match.match_time}
+                          {toIST(match.match_time)}
                           {match.group_name ? ` · Group ${match.group_name}` : ''}
                           {isKnockout && !bothKnown && (
                             <span style={{color:'var(--gold)',marginLeft:'0.5rem'}}>⏳ Awaiting group results</span>
@@ -800,33 +875,43 @@ export default function Admin() {
                           }}
                         >
                           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:'0.5rem',marginBottom: isEditing ? '0.75rem' : 0}}>
-                            <div>
-                              <span style={{fontSize:'0.88rem',fontWeight:500}}>{m.team_a}</span>
-                              <span style={{color:'var(--gray-500)',margin:'0 0.4rem',fontSize:'0.8rem'}}>vs</span>
-                              <span style={{fontSize:'0.88rem',fontWeight:500}}>{m.team_b}</span>
-                              <span style={{fontSize:'0.73rem',color:'var(--gray-500)',marginLeft:'0.5rem'}}>{m.match_time}</span>
+                            <div style={{display:'flex',alignItems:'center',gap:'6px'}}>
+                              <span style={{display:'inline-flex',alignItems:'center',gap:'4px',fontSize:'0.88rem',fontWeight:500}}><FlagImg team={m.team_a} size={18} />{m.team_a}</span>
+                              <span style={{color:'var(--gray-500)',fontSize:'0.8rem'}}>vs</span>
+                              <span style={{display:'inline-flex',alignItems:'center',gap:'4px',fontSize:'0.88rem',fontWeight:500}}><FlagImg team={m.team_b} size={18} />{m.team_b}</span>
+                              <span style={{fontSize:'0.73rem',color:'var(--gray-500)',marginLeft:'0.5rem'}}>{toIST(m.match_time)}</span>
                             </div>
                             <div style={{display:'flex',alignItems:'center',gap:'0.5rem'}}>
                               <span className="match-result-badge">{m.score_a}–{m.score_b}</span>
                               {!isEditing && (
-                                <button
-                                  className="btn btn-ghost btn-sm"
-                                  onClick={() => {
-                                    setEditingMatch(m)
-                                    setResultForm(prev => ({
-                                      ...prev,
-                                      [m.id]: {
-                                        result: m.result,
-                                        scoreA: String(m.score_a),
-                                        scoreB: String(m.score_b),
-                                      }
-                                    }))
-                                    setShowCompleted(true)
-                                  }}
-                                  style={{fontSize:'0.72rem',padding:'0.2rem 0.5rem'}}
-                                >
-                                  ✏️ Edit
-                                </button>
+                                <>
+                                  <button
+                                    className="btn btn-ghost btn-sm"
+                                    onClick={() => {
+                                      setEditingMatch(m)
+                                      setResultForm(prev => ({
+                                        ...prev,
+                                        [m.id]: {
+                                          result: m.result,
+                                          scoreA: String(m.score_a),
+                                          scoreB: String(m.score_b),
+                                        }
+                                      }))
+                                      setShowCompleted(true)
+                                    }}
+                                    style={{fontSize:'0.72rem',padding:'0.2rem 0.5rem'}}
+                                  >
+                                    ✏️ Edit
+                                  </button>
+                                  <button
+                                    className="btn btn-ghost btn-sm"
+                                    disabled={saving[m.id]}
+                                    onClick={() => resetResult(m)}
+                                    style={{fontSize:'0.72rem',padding:'0.2rem 0.5rem',color:'var(--danger,#e74c3c)'}}
+                                  >
+                                    {saving[m.id] ? '...' : '🔄 Reset'}
+                                  </button>
+                                </>
                               )}
                               {isEditing && (
                                 <button
