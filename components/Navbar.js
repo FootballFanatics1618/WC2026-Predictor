@@ -1,38 +1,99 @@
+import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import Link from 'next/link'
 import { useRouter } from 'next/router'
 import { supabase } from '../lib/supabase'
 import Image from 'next/image'
 
+const ADMIN_EMAILS = process.env.NEXT_PUBLIC_ADMIN_EMAILS
+  ? process.env.NEXT_PUBLIC_ADMIN_EMAILS.split(',').map(e => e.trim())
+  : []
+
 export default function Navbar({ user }) {
   const router = useRouter()
+  const [showSignOutModal, setShowSignOutModal] = useState(false)
+  const isAdmin = user && ADMIN_EMAILS.includes(user.email)
+  const currentPath = router.pathname
+
+  useEffect(() => {
+    setShowSignOutModal(false)
+  }, [currentPath])
+
+  useEffect(() => {
+    if (!showSignOutModal) return
+    const onKeyDown = event => {
+      if (event.key === 'Escape') setShowSignOutModal(false)
+    }
+    document.body.style.overflow = 'hidden'
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.body.style.overflow = ''
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [showSignOutModal])
 
   async function handleLogout() {
+    setShowSignOutModal(false)
     await supabase.auth.signOut()
     router.push('/login')
   }
 
+  function isActive(href) {
+    return currentPath === href
+  }
+
+  function navClass(href) {
+    return `nav-btn nav-btn-ghost${isActive(href) ? ' nav-btn-active' : ''}`
+  }
+
   return (
     <nav className="nav">
-      <Link href="/" className="nav-logo">
-        <Image src="/ff-logo.jpg" alt="Football Fanatics" width={36} height={36} style={{ borderRadius: '50%', objectFit: 'cover', marginRight: '10px', verticalAlign: 'middle' }} />
-        <span>Football Fanatics WC2026 Predictor</span>
-      </Link>
-      <div className="nav-links">
-        {user ? (
-          <>
-            <Link href="/predict" className="nav-btn nav-btn-ghost">Predict</Link>
-            <Link href="/others" className="nav-btn nav-btn-ghost">Others' Picks</Link>
-            <Link href="/leaderboard" className="nav-btn nav-btn-ghost">Leaderboard</Link>
-            <Link href="/admin" className="nav-btn nav-btn-ghost">Admin</Link>
-            <button onClick={handleLogout} className="nav-btn nav-btn-ghost">Sign Out</button>
-          </>
-        ) : (
-          <>
-            <Link href="/login" className="nav-btn nav-btn-ghost">Sign In</Link>
-            <Link href="/signup" className="nav-btn nav-btn-gold">Sign Up</Link>
-          </>
-        )}
+      <div className="nav-inner">
+        <Link href="/" className="nav-logo">
+          <Image src="/ff-logo.jpg" alt="Football Fanatics" width={36} height={36}
+            style={{ borderRadius: '50%', objectFit: 'cover', verticalAlign: 'middle' }} />
+          <span>FF WC2026</span>
+        </Link>
+        <div className="nav-links">
+          {user ? (
+            <>
+              <Link href="/predict" className={navClass('/predict')}>Predict</Link>
+              <Link href="/others" className={navClass('/others')}>Others</Link>
+              <Link href="/leaderboard" className={navClass('/leaderboard')}>Leaderboard</Link>
+              {isAdmin && <Link href="/admin" className={navClass('/admin')}>Admin</Link>}
+              <button onClick={() => setShowSignOutModal(true)} className="nav-btn nav-btn-ghost nav-btn-icon" aria-label="Sign out">
+                <span aria-hidden="true">⏻</span>
+              </button>
+            </>
+          ) : (
+            <>
+              <Link href="/login" className={navClass('/login')}>Sign In</Link>
+              <Link href="/signup" className={navClass('/signup')}>Sign Up</Link>
+            </>
+          )}
+        </div>
       </div>
+
+      {showSignOutModal && typeof document !== 'undefined' && createPortal(
+        <div className="nav-modal-backdrop" onClick={() => setShowSignOutModal(false)}>
+          <div className="nav-modal-card" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="signout-title">
+            <div className="nav-modal-eyebrow">Confirm sign out</div>
+            <h2 id="signout-title" className="nav-modal-title">Sign out?</h2>
+            <p className="nav-modal-copy">
+              You’ll need to sign in again to continue making predictions.
+            </p>
+            <div className="nav-modal-actions">
+              <button className="btn btn-ghost" onClick={() => setShowSignOutModal(false)}>
+                Dismiss
+              </button>
+              <button className="btn btn-danger" onClick={handleLogout}>
+                Logout
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
     </nav>
   )
 }
