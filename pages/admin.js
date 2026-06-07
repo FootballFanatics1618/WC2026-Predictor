@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/router'
 import Navbar from '../components/Navbar'
 import { supabase } from '../lib/supabase'
-import { format, parseISO } from 'date-fns'
+import { format, parseISO, isToday } from 'date-fns'
 
 const ADMIN_EMAILS = ['your-email@gmail.com', 'admin589@gmail.com']
 const STAGE_ORDER = ['Group Stage','Round of 32','Round of 16','Quarter-final','Semi-final','3rd Place Play-off','Final']
@@ -23,7 +23,6 @@ const GROUP_TEAMS = {
   L:["England","Croatia","Ghana","Panama"],
 }
 
-// Sort group standing entries
 function sortStandings(rows) {
   return [...rows].sort((a,b) => {
     if (b.points !== a.points) return b.points - a.points
@@ -40,15 +39,17 @@ export default function Admin() {
   const [user, setUser] = useState(null)
   const [isAdmin, setIsAdmin] = useState(false)
   const [matches, setMatches] = useState([])
-  const [standings, setStandings] = useState([]) // flat list from DB
+  const [standings, setStandings] = useState([])
   const [resultForm, setResultForm] = useState({})
   const [saving, setSaving] = useState({})
   const [goldenBootWinner, setGoldenBootWinner] = useState('')
   const [gbSaving, setGbSaving] = useState(false)
   const [message, setMessage] = useState('')
   const [activeStage, setActiveStage] = useState('Group Stage')
+  const [selectedDay, setSelectedDay] = useState(null)
   const [loading, setLoading] = useState(true)
   const [showStandings, setShowStandings] = useState(false)
+  const [showCompleted, setShowCompleted] = useState(false)
 
   useEffect(() => { init() }, [])
 
@@ -133,7 +134,6 @@ export default function Admin() {
     const tA = match.team_a
     const tB = match.team_b
 
-    // Fetch current standings for these two teams
     const { data: rows } = await supabase.from('group_standings')
       .select('*').eq('group_name', g).in('team', [tA, tB])
 
@@ -169,19 +169,16 @@ export default function Admin() {
     }
   }
 
-  // After ALL 72 group stage matches done, resolve R32 group-based slots
   async function propagateAllGroupWinners(allMatches) {
     const groups = Object.keys(GROUP_TEAMS)
     const { data: standingRows } = await supabase.from('group_standings').select('*')
 
-    // Build sorted standings per group
     const groupSorted = {}
     for (const g of groups) {
       const rows = (standingRows || []).filter(r => r.group_name === g)
       groupSorted[g] = sortStandings(rows)
     }
 
-    // Collect all third-placed teams, sort to find best 8
     const thirds = groups.map(g => {
       const t = groupSorted[g][2]
       if (!t) return null
@@ -195,18 +192,14 @@ export default function Admin() {
       return a.group.localeCompare(b.group)
     })
 
-    // Build slot → team map for R32 placeholder text
-    // Slot text in matches: "Winner A", "Runner-up B", "Best 3rd (A/B/C/D/F)"
     const slotMap = {}
     for (const g of groups) {
       slotMap[`Winner ${g}`] = groupSorted[g][0]?.team
       slotMap[`Runner-up ${g}`] = groupSorted[g][1]?.team
     }
 
-    // For Best 3rd slots, assign best remaining 3rd placed teams in order
     const best3rds = [...thirds]
 
-    // Update R32 matches that still have placeholder text
     const r32 = allMatches.filter(m => m.stage === 'Round of 32' && m.result === null)
     for (const m of r32) {
       const upd = {}
@@ -222,17 +215,15 @@ export default function Admin() {
     if (!placeholder) return null
     if (slotMap[placeholder]) return slotMap[placeholder]
     if (placeholder.startsWith('Best 3rd')) {
-      // Extract allowed groups e.g. "Best 3rd (A/B/C/D/F)"
       const match = placeholder.match(/\(([^)]+)\)/)
       if (match) {
         const allowed = match[1].split('/').map(s => s.trim())
         const pick = best3rds.find(t => allowed.includes(t.group))
         if (pick) {
-          best3rds.splice(best3rds.indexOf(pick), 1) // consume it
+          best3rds.splice(best3rds.indexOf(pick), 1)
           return pick.team
         }
       }
-      // Fallback: pick first remaining best 3rd
       if (best3rds.length > 0) { const p = best3rds.shift(); return p.team }
     }
     return null
@@ -257,17 +248,40 @@ export default function Admin() {
   if (loading) return <><Navbar user={user}/><div className="page" style={{textAlign:'center',paddingTop:'5rem',color:'var(--gray-500)'}}>Loading...</div></>
   if (!isAdmin) return <><Navbar user={user}/><div className="page" style={{textAlign:'center',paddingTop:'5rem',color:'var(--gray-500)'}}>⛔ No admin access.</div></>
 
+  // ── Derived data ──────────────────────────────────────────────────────────
+
   const stageMatches = matches.filter(m => m.stage === activeStage)
-  const pendingInStage = stageMatches.filter(m => m.result === null)
-  const doneInStage = stageMatches.filter(m => m.result !== null)
   const totalDone = matches.filter(m => m.result !== null).length
 
-  // Group standings by group for display
+  // Build a sorted list of unique dates within the current stage
+  const stageDates = [...new Set(stageMatches.map(m => m.match_date))].sort()
+
+  // Auto-select the first date in this stage when the stage changes
+  // (handled reactively below via the derived `activeDayDate`)
+  const activeDayDate = selectedDay && stageDates.includes(selectedDay)
+    ? selectedDay
+    : stageDates[0] || null
+
+  // Matches on the selected day
+  const dayMatches = stageMatches.filter(m => m.match_date === activeDayDate)
+  const pendingOnDay = dayMatches.filter(m => m.result === null)
+  const completedOnDay = dayMatches.filter(m => m.result !== null)
+
+  // Pending count across the whole stage (for badge on stage tab)
+  const pendingInStage = stageMatches.filter(m => m.result === null)
+
+  // Group standings
   const groups = Object.keys(GROUP_TEAMS)
   const standingsByGroup = {}
   groups.forEach(g => {
     standingsByGroup[g] = sortStandings(standings.filter(s => s.group_name === g))
   })
+
+  function dayLabel(dateStr) {
+    const d = parseISO(dateStr)
+    const todayFlag = isToday(d)
+    return (todayFlag ? '📅 Today · ' : '') + format(d, 'EEE, MMM d')
+  }
 
   return (
     <>
@@ -278,9 +292,14 @@ export default function Admin() {
           {totalDone}/104 matches completed. Entering a result immediately scores all predictions and updates standings.
         </p>
 
-        {message && <div className="alert alert-success" style={{marginBottom:'1.5rem'}}>{message}<button onClick={()=>setMessage('')} style={{marginLeft:'1rem',background:'none',border:'none',color:'inherit',cursor:'pointer'}}>×</button></div>}
+        {message && (
+          <div className="alert alert-success" style={{marginBottom:'1.5rem'}}>
+            {message}
+            <button onClick={()=>setMessage('')} style={{marginLeft:'1rem',background:'none',border:'none',color:'inherit',cursor:'pointer'}}>×</button>
+          </div>
+        )}
 
-        {/* Golden Boot */}
+        {/* ── Golden Boot ───────────────────────────────────────────────── */}
         <div className="card-gold" style={{marginBottom:'2rem'}}>
           <h2 style={{fontFamily:'var(--font-display)',fontSize:'1.3rem',color:'var(--gold)',marginBottom:'0.75rem'}}>🥇 AWARD GOLDEN BOOT</h2>
           <p style={{fontSize:'0.82rem',color:'var(--gray-500)',marginBottom:'0.75rem'}}>End of tournament only. Users who picked this player get +10 pts.</p>
@@ -293,13 +312,18 @@ export default function Admin() {
           </div>
         </div>
 
-        {/* Stage tabs */}
+        {/* ── Stage tabs ────────────────────────────────────────────────── */}
         <div style={{overflowX:'auto',marginBottom:'1.5rem'}}>
           <div className="tabs" style={{flexWrap:'nowrap',minWidth:'max-content'}}>
             {STAGE_ORDER.map(s => {
               const cnt = matches.filter(m=>m.stage===s&&m.result===null).length
               return (
-                <button key={s} className={`tab-btn ${activeStage===s?'active':''}`} onClick={()=>setActiveStage(s)} style={{whiteSpace:'nowrap',fontSize:'0.78rem',padding:'0.4rem 0.6rem'}}>
+                <button
+                  key={s}
+                  className={`tab-btn ${activeStage===s?'active':''}`}
+                  onClick={()=>{ setActiveStage(s); setSelectedDay(null); setShowCompleted(false) }}
+                  style={{whiteSpace:'nowrap',fontSize:'0.78rem',padding:'0.4rem 0.6rem'}}
+                >
                   {s} {cnt>0&&<span style={{background:'var(--danger)',color:'#fff',borderRadius:'99px',padding:'0 5px',fontSize:'0.68rem',marginLeft:'3px'}}>{cnt}</span>}
                 </button>
               )
@@ -307,65 +331,204 @@ export default function Admin() {
           </div>
         </div>
 
-        <h2 style={{fontFamily:'var(--font-display)',fontSize:'1.2rem',marginBottom:'0.75rem',color:'var(--white)'}}>
-          PENDING ({pendingInStage.length})
-        </h2>
+        {/* ── Day pills ─────────────────────────────────────────────────── */}
+        {stageDates.length > 0 && (
+          <div style={{overflowX:'auto',marginBottom:'1.5rem'}}>
+            <div style={{display:'flex',gap:'0.5rem',flexWrap:'nowrap',minWidth:'max-content'}}>
+              {stageDates.map(dateStr => {
+                const pendingCount = stageMatches.filter(m => m.match_date===dateStr && m.result===null).length
+                const allDone = pendingCount === 0
+                const isActive = activeDayDate === dateStr
+                return (
+                  <button
+                    key={dateStr}
+                    onClick={()=>{ setSelectedDay(dateStr); setShowCompleted(false) }}
+                    style={{
+                      padding:'0.4rem 0.9rem',
+                      borderRadius:'99px',
+                      border:'1px solid',
+                      borderColor: isActive ? 'var(--primary)' : allDone ? 'var(--gray-700)' : 'var(--gray-600)',
+                      background: isActive ? 'var(--primary)' : allDone ? 'var(--gray-800)' : 'transparent',
+                      color: isActive ? '#fff' : allDone ? 'var(--gray-500)' : 'var(--gray-300)',
+                      fontSize:'0.78rem',
+                      cursor:'pointer',
+                      whiteSpace:'nowrap',
+                      display:'flex',
+                      alignItems:'center',
+                      gap:'0.35rem',
+                      transition:'all 0.15s',
+                    }}
+                  >
+                    {allDone && <span style={{color:'#68d391',fontSize:'0.7rem'}}>✓</span>}
+                    {format(parseISO(dateStr),'EEE d MMM')}
+                    {!allDone && (
+                      <span style={{background:'var(--danger)',color:'#fff',borderRadius:'99px',padding:'0 4px',fontSize:'0.65rem'}}>{pendingCount}</span>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
 
-        <div style={{display:'flex',flexDirection:'column',gap:'0.65rem',marginBottom:'2rem'}}>
-          {pendingInStage.length === 0 && (
-            <div className="card" style={{textAlign:'center',padding:'1.5rem',color:'var(--gray-500)'}}>All {activeStage} matches done! 🎉</div>
-          )}
-          {pendingInStage.map(match => {
+        {/* ── Selected day header ───────────────────────────────────────── */}
+        {activeDayDate && (
+          <h2 style={{fontFamily:'var(--font-display)',fontSize:'1.1rem',marginBottom:'1rem',color:'var(--white)'}}>
+            {dayLabel(activeDayDate)}
+            <span style={{fontWeight:400,color:'var(--gray-500)',fontSize:'0.85rem',marginLeft:'0.6rem'}}>
+              · {pendingOnDay.length} pending · {completedOnDay.length} done
+            </span>
+          </h2>
+        )}
+
+        {/* ── Pending matches on selected day ───────────────────────────── */}
+        {pendingOnDay.length === 0 && completedOnDay.length === 0 && (
+          <div className="card" style={{textAlign:'center',padding:'1.5rem',color:'var(--gray-500)'}}>
+            No matches scheduled for this stage yet.
+          </div>
+        )}
+
+        {pendingOnDay.length === 0 && completedOnDay.length > 0 && (
+          <div className="card" style={{textAlign:'center',padding:'1rem 1.5rem',color:'#68d391',marginBottom:'1rem',display:'flex',alignItems:'center',justifyContent:'center',gap:'0.5rem'}}>
+            <span style={{fontSize:'1.2rem'}}>✅</span>
+            All matches on this day are complete!
+          </div>
+        )}
+
+        <div style={{display:'flex',flexDirection:'column',gap:'0.75rem',marginBottom:'1.5rem'}}>
+          {pendingOnDay.map(match => {
             const form = resultForm[match.id] || {}
             const isKnockout = match.stage !== 'Group Stage'
             const bothKnown = !['Winner','Runner','Best','Loser'].some(w => (match.team_a||'').includes(w) || (match.team_b||'').includes(w))
             return (
-              <div key={match.id} className="card" style={{padding:'0.85rem 1.1rem',opacity: isKnockout && !bothKnown ? 0.5 : 1}}>
-                <div style={{display:'flex',alignItems:'center',gap:'0.6rem',flexWrap:'wrap'}}>
-                  <div style={{flex:1,minWidth:'200px'}}>
-                    <div style={{fontWeight:700,fontSize:'0.9rem',marginBottom:'0.1rem'}}>
-                      {match.team_a} <span style={{color:'var(--gray-500)',fontWeight:400}}>vs</span> {match.team_b}
+              <div key={match.id} className="card" style={{padding:'1rem 1.25rem',opacity: isKnockout && !bothKnown ? 0.55 : 1,border:'1px solid var(--gray-700)'}}>
+                {/* Match info row */}
+                <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:'0.5rem',flexWrap:'wrap',marginBottom:'0.75rem'}}>
+                  <div>
+                    <div style={{fontWeight:700,fontSize:'1rem',marginBottom:'0.2rem'}}>
+                      {match.team_a}
+                      <span style={{color:'var(--gray-500)',fontWeight:400,margin:'0 0.4rem'}}>vs</span>
+                      {match.team_b}
                     </div>
                     <div style={{fontSize:'0.75rem',color:'var(--gray-500)'}}>
-                      {format(parseISO(match.match_date),'EEE MMM d')} · {match.match_time} · {match.stage}{match.group_name ? ` G-${match.group_name}` : ''}
+                      {match.match_time}
+                      {match.group_name ? ` · Group ${match.group_name}` : ''}
+                      {isKnockout && !bothKnown && (
+                        <span style={{color:'var(--gold)',marginLeft:'0.5rem'}}>⏳ Awaiting group results</span>
+                      )}
                     </div>
-                    {isKnockout && !bothKnown && <div style={{fontSize:'0.72rem',color:'var(--gold)',marginTop:'0.15rem'}}>⏳ Awaiting group results</div>}
                   </div>
-                  {bothKnown && <>
-                    <select className="form-select" style={{width:'150px'}} value={form.result||''} onChange={e=>handleResultInput(match.id,'result',e.target.value)}>
+                  <span style={{fontSize:'0.72rem',background:'var(--gray-800)',color:'var(--gray-400)',borderRadius:'4px',padding:'0.15rem 0.4rem',border:'1px solid var(--gray-700)',whiteSpace:'nowrap'}}>
+                    {match.stage}
+                  </span>
+                </div>
+
+                {/* Score entry */}
+                {bothKnown && (
+                  <div style={{display:'flex',alignItems:'center',gap:'0.6rem',flexWrap:'wrap'}}>
+                    <select
+                      className="form-select"
+                      style={{flex:'1 1 160px',minWidth:'140px'}}
+                      value={form.result||''}
+                      onChange={e=>handleResultInput(match.id,'result',e.target.value)}
+                    >
                       <option value="">— Result —</option>
                       <option value="teamA">{match.team_a} Win</option>
                       {match.stage === 'Group Stage' && <option value="draw">Draw</option>}
                       <option value="teamB">{match.team_b} Win</option>
                     </select>
-                    <input className="form-input" style={{width:'68px'}} type="number" min="0" placeholder="A" value={form.scoreA??''} onChange={e=>handleResultInput(match.id,'scoreA',e.target.value)}/>
-                    <span style={{color:'var(--gray-500)'}}>–</span>
-                    <input className="form-input" style={{width:'68px'}} type="number" min="0" placeholder="B" value={form.scoreB??''} onChange={e=>handleResultInput(match.id,'scoreB',e.target.value)}/>
-                    <button className="btn btn-primary btn-sm" onClick={()=>saveResult(match)} disabled={saving[match.id]}>
-                      {saving[match.id]?'...':'Save'}
+
+                    <div style={{display:'flex',alignItems:'center',gap:'0.4rem'}}>
+                      <input
+                        className="form-input"
+                        style={{width:'64px',textAlign:'center'}}
+                        type="number" min="0"
+                        placeholder="A"
+                        value={form.scoreA??''}
+                        onChange={e=>handleResultInput(match.id,'scoreA',e.target.value)}
+                      />
+                      <span style={{color:'var(--gray-500)',fontWeight:700}}>–</span>
+                      <input
+                        className="form-input"
+                        style={{width:'64px',textAlign:'center'}}
+                        type="number" min="0"
+                        placeholder="B"
+                        value={form.scoreB??''}
+                        onChange={e=>handleResultInput(match.id,'scoreB',e.target.value)}
+                      />
+                    </div>
+
+                    <button
+                      className="btn btn-primary btn-sm"
+                      onClick={()=>saveResult(match)}
+                      disabled={saving[match.id]}
+                      style={{minWidth:'70px'}}
+                    >
+                      {saving[match.id] ? '...' : '✓ Save'}
                     </button>
-                  </>}
-                </div>
+                  </div>
+                )}
               </div>
             )
           })}
         </div>
 
-        {doneInStage.length > 0 && (
-          <>
-            <h2 style={{fontFamily:'var(--font-display)',fontSize:'1.2rem',marginBottom:'0.75rem',color:'var(--white)'}}>COMPLETED ({doneInStage.length})</h2>
-            <div style={{display:'flex',flexDirection:'column',gap:'0.35rem',marginBottom:'2rem'}}>
-              {doneInStage.map(m=>(
-                <div key={m.id} className="card" style={{padding:'0.5rem 1.1rem',opacity:0.6,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                  <span style={{fontSize:'0.85rem'}}>{m.team_a} vs {m.team_b}</span>
-                  <span className="match-result-badge">{m.score_a}–{m.score_b}</span>
-                </div>
-              ))}
-            </div>
-          </>
+        {/* ── Completed matches on selected day (collapsible) ───────────── */}
+        {completedOnDay.length > 0 && (
+          <div style={{marginBottom:'2rem'}}>
+            <button
+              onClick={()=>setShowCompleted(s=>!s)}
+              style={{
+                display:'flex',alignItems:'center',gap:'0.5rem',
+                background:'none',border:'none',cursor:'pointer',
+                color:'var(--gray-400)',fontSize:'0.85rem',
+                marginBottom:'0.5rem',padding:0,
+              }}
+            >
+              <span style={{
+                display:'inline-block',
+                transform: showCompleted ? 'rotate(90deg)' : 'rotate(0deg)',
+                transition:'transform 0.2s',
+                fontSize:'0.7rem',
+              }}>▶</span>
+              <span style={{fontFamily:'var(--font-display)',letterSpacing:'0.05em'}}>
+                COMPLETED ({completedOnDay.length})
+              </span>
+            </button>
+
+            {showCompleted && (
+              <div style={{display:'flex',flexDirection:'column',gap:'0.35rem'}}>
+                {completedOnDay.map(m => (
+                  <div
+                    key={m.id}
+                    className="card"
+                    style={{
+                      padding:'0.55rem 1.1rem',
+                      display:'flex',
+                      justifyContent:'space-between',
+                      alignItems:'center',
+                      opacity:0.7,
+                      border:'1px solid var(--gray-800)',
+                    }}
+                  >
+                    <div>
+                      <span style={{fontSize:'0.88rem',fontWeight:500}}>{m.team_a}</span>
+                      <span style={{color:'var(--gray-500)',margin:'0 0.4rem',fontSize:'0.8rem'}}>vs</span>
+                      <span style={{fontSize:'0.88rem',fontWeight:500}}>{m.team_b}</span>
+                      <span style={{fontSize:'0.73rem',color:'var(--gray-500)',marginLeft:'0.5rem'}}>{m.match_time}</span>
+                    </div>
+                    <div style={{display:'flex',alignItems:'center',gap:'0.5rem'}}>
+                      <span className="match-result-badge">{m.score_a}–{m.score_b}</span>
+                      <span style={{fontSize:'0.7rem',color:'#68d391'}}>✓</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         )}
 
-        {/* Group Standings Table */}
+        {/* ── Group Standings (Group Stage only) ────────────────────────── */}
         {activeStage === 'Group Stage' && (
           <>
             <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'1rem',flexWrap:'wrap',gap:'0.5rem'}}>
@@ -401,7 +564,9 @@ export default function Admin() {
                             <td style={{textAlign:'center'}}>{row.won}</td>
                             <td style={{textAlign:'center'}}>{row.drawn}</td>
                             <td style={{textAlign:'center'}}>{row.lost}</td>
-                            <td style={{textAlign:'center',color: (row.goals_for-row.goals_against)>0?'#68d391':(row.goals_for-row.goals_against)<0?'#fc8181':'var(--gray-300)'}}>{row.goals_for-row.goals_against>0?'+':''}{row.goals_for-row.goals_against}</td>
+                            <td style={{textAlign:'center',color: (row.goals_for-row.goals_against)>0?'#68d391':(row.goals_for-row.goals_against)<0?'#fc8181':'var(--gray-300)'}}>
+                              {row.goals_for-row.goals_against>0?'+':''}{row.goals_for-row.goals_against}
+                            </td>
                             <td style={{textAlign:'center',fontWeight:700,color:'var(--gold)'}}>{row.points}</td>
                           </tr>
                         ))}
