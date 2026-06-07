@@ -4,10 +4,9 @@ import { useRouter } from 'next/router'
 import Navbar from '../components/Navbar'
 import FlagImg from '../components/FlagImg'
 import { supabase } from '../lib/supabase'
-import { generateScorelines } from '../lib/data'
+import { generateScorelines, TOURNAMENT_START } from '../lib/data'
 import { toIST } from '../lib/flags'
-import { isMatchPredictionLocked, timeUntilLock, isGoldenBootLocked, GOLDEN_BOOT_LOCK } from '../lib/locktime'
-import { ALL_PLAYERS } from '../lib/data'
+import { isMatchPredictionLocked, timeUntilLock } from '../lib/locktime'
 import { format, parseISO, isToday, isBefore, startOfDay } from 'date-fns'
 
 export default function Predict() {
@@ -23,13 +22,6 @@ export default function Predict() {
   const [message, setMessage] = useState('')
   const [selectedUpcomingDate, setSelectedUpcomingDate] = useState(null)
   const [now, setNow] = useState(new Date())
-  // Golden Boot inline state
-  const [gbSearch, setGbSearch] = useState('')
-  const [gbPick, setGbPick] = useState('')
-  const [gbOpen, setGbOpen] = useState(false)
-  const [gbSaving, setGbSaving] = useState(false)
-  const [gbMsg, setGbMsg] = useState('')
-  const [gbLocked, setGbLocked] = useState(false)
 
   // Tick every minute to re-evaluate locks
   useEffect(() => {
@@ -98,12 +90,7 @@ export default function Predict() {
     ;(predsRes.data || []).forEach(p => { predsMap[p.match_id] = p })
     setSavedPredictions(predsMap)
     setLoading(false)
-    if (profileRes.data) {
-      setGbPick(profileRes.data.golden_boot_pick || '')
-      setGbSearch(profileRes.data.golden_boot_pick || '')
-    }
-    setGbLocked(isGoldenBootLocked())
-    if (router.query.welcome) setMessage("🎉 Welcome! Set your Golden Boot pick on the home page, then predict matches here!")
+    if (router.query.welcome) setMessage("🎉 Welcome! Now predict today's matches!")
   }
 
   // A match is in "past days" if its date is strictly before today
@@ -243,7 +230,7 @@ export default function Predict() {
         {completed && (
           <div style={{ textAlign: 'center', marginBottom: '0.6rem' }}>
             <span className="match-result-badge" style={{ fontSize: '1rem', padding: '0.3rem 1rem' }}>
-              {match.score_a} – {match.score_b}
+              FT {match.score_a} – {match.score_b}
             </span>
             {saved && (
               <div style={{ marginTop: '0.4rem', fontSize: '0.82rem', color: 'var(--gray-500)' }}>
@@ -309,6 +296,8 @@ export default function Predict() {
     return unlocked.every(m => !!savedPredictions[m.id])
   }
 
+  const isGbLocked = new Date() >= TOURNAMENT_START
+
   if (loading) return (
     <><Navbar user={user} /><div style={{ textAlign: 'center', paddingTop: '5rem', color: 'var(--gray-500)' }}>Loading matches...</div></>
   )
@@ -327,79 +316,32 @@ export default function Predict() {
           </div>
         )}
 
+        <div style={{ fontWeight: 700, color: 'var(--gold)', marginBottom: '1.25rem', maxWidth: '700px', margin: '0 auto 1.25rem' }}>👋 {profile.username}</div>
         {profile && (
-          <div className="card-gold" style={{ maxWidth: '700px', margin: '0 auto 1.5rem' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.9rem' }}>
-              <span style={{ fontWeight: 700, color: 'var(--gold)', fontSize: '1rem' }}>👋 {profile.first_name || profile.username}</span>
-              {gbLocked
-                ? <span className="lock-chip">🔒 Golden Boot locked</span>
-                : <span style={{ fontSize: '0.75rem', color: '#f6ad55', background: 'rgba(246,173,85,0.12)', padding: '2px 8px', borderRadius: '99px' }}>
-                    ⚠️ Freezes Jun 10, 11:30 PM IST — 1hr before tournament
-                  </span>
-              }
-            </div>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-              <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--gray-300)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>🥇 Golden Boot Pick</span>
-              <span style={{ fontSize: '0.78rem', color: 'var(--gray-500)' }}>— +10 pts if correct</span>
-            </div>
-
-            {gbLocked ? (
-              <div style={{ padding: '0.6rem 0.9rem', background: 'rgba(255,255,255,0.04)', borderRadius: 'var(--radius)', fontSize: '0.925rem', color: 'var(--white)', fontWeight: 600 }}>
-                {profile.golden_boot_pick || <span style={{ color: 'var(--gray-500)' }}>No pick was made before lock</span>}
+          <div className="card-gold" style={{ maxWidth: '700px', margin: '0 auto 1.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
+            {profile.golden_boot_pick ? (
+              <div>
+                <div style={{ color: 'var(--gray-500)', fontSize: '0.85rem' }}>
+                  🥇 Golden Boot: <strong style={{ color: 'var(--white)' }}>{profile.golden_boot_pick}</strong>
+                </div>
+                {isGbLocked
+                  ? <span className="lock-chip" style={{ marginTop: '0.3rem' }}>🔒 Locked</span>
+                  : <div style={{ fontSize: '0.75rem', color: '#f6ad55', background: 'rgba(246,173,85,0.12)', padding: '2px 8px', borderRadius: '99px', display: 'inline-block', marginTop: '0.3rem' }}>
+                      ⚠️ Freezes Jun 10, 11:30 PM IST — 1hr before tournament
+                    </div>
+                }
               </div>
             ) : (
-              <div style={{ position: 'relative' }}>
-                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                  <div style={{ flex: 1, position: 'relative' }}>
-                    <input
-                      className="form-input"
-                      placeholder="Search player name..."
-                      value={gbSearch}
-                      onChange={e => { setGbSearch(e.target.value); setGbPick(''); setGbOpen(true) }}
-                      onFocus={() => setGbOpen(true)}
-                      onBlur={() => setTimeout(() => setGbOpen(false), 150)}
-                      style={{ paddingRight: gbPick ? '2.2rem' : '0.9rem' }}
-                    />
-                    {gbPick && <span style={{ position: 'absolute', right: '0.7rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--success)' }}>✓</span>}
-                  </div>
-                  <button
-                    className="btn btn-primary btn-sm"
-                    style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
-                    disabled={gbSaving || !gbPick}
-                    onClick={async () => {
-                      if (!gbPick) return
-                      setGbSaving(true)
-                      const { error } = await supabase.from('profiles').update({ golden_boot_pick: gbPick }).eq('id', user.id)
-                      if (!error) { setProfile(p => ({ ...p, golden_boot_pick: gbPick })); setGbMsg('✅ Saved!') }
-                      else setGbMsg('❌ Error saving')
-                      setGbSaving(false)
-                      setTimeout(() => setGbMsg(''), 2500)
-                    }}
-                  >
-                    {gbSaving ? '...' : profile.golden_boot_pick ? 'Update' : 'Save Pick'}
-                  </button>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ color: 'var(--white)', fontWeight: 600, marginBottom: '0.25rem' }}>Golden Boot not selected yet</div>
+                <div style={{ color: 'var(--gray-500)', fontSize: '0.85rem', lineHeight: 1.5 }}>
+                  Pick your tournament top scorer to unlock the bonus points tracker.
                 </div>
-                {gbMsg && <div style={{ fontSize: '0.8rem', marginTop: '0.4rem', color: gbMsg.startsWith('✅') ? 'var(--success)' : 'var(--danger)' }}>{gbMsg}</div>}
-                {gbOpen && (() => {
-                  const players = [...ALL_PLAYERS].sort().filter(p => !gbSearch || p.toLowerCase().includes(gbSearch.toLowerCase()))
-                  return players.length > 0 ? (
-                    <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: '90px', background: 'var(--gray-900)', border: '1px solid rgba(245,200,66,0.3)', borderRadius: 'var(--radius)', maxHeight: '200px', overflowY: 'auto', zIndex: 300, boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}>
-                      {players.slice(0, 60).map(p => (
-                        <div key={p} onMouseDown={() => { setGbPick(p); setGbSearch(p); setGbOpen(false) }}
-                          style={{ padding: '0.5rem 0.9rem', cursor: 'pointer', fontSize: '0.875rem', color: gbPick === p ? 'var(--gold)' : 'var(--white)', background: gbPick === p ? 'rgba(245,200,66,0.08)' : 'transparent', borderBottom: '1px solid rgba(255,255,255,0.04)', display: 'flex', justifyContent: 'space-between' }}
-                          onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.07)'}
-                          onMouseLeave={e => e.currentTarget.style.background = gbPick === p ? 'rgba(245,200,66,0.08)' : 'transparent'}
-                        >
-                          {p} {gbPick === p && <span>✓</span>}
-                        </div>
-                      ))}
-                      {players.length > 60 && <div style={{ padding: '0.4rem 0.9rem', fontSize: '0.78rem', color: 'var(--gray-500)', textAlign: 'center' }}>Type more to narrow ({players.length} players)</div>}
-                    </div>
-                  ) : null
-                })()}
               </div>
             )}
+            <Link href="/golden-boot" className={`btn btn-sm ${profile.golden_boot_pick ? 'btn-ghost' : 'btn-primary'}`}>
+              {profile.golden_boot_pick ? 'Edit' : 'Choose GB player'}
+            </Link>
           </div>
         )}
 
