@@ -26,7 +26,7 @@ export default function Leaderboard() {
   }
 
   async function fetchTable() {
-    const { data: profiles } = await supabase.from('profiles').select('id, username, golden_boot_pick, golden_boot_correct')
+    const { data: profiles } = await supabase.from('profiles').select('id, username, first_name, last_name, golden_boot_pick, golden_boot_correct')
     const { data: predictions } = await supabase.from('predictions').select('*')
     if (!profiles) return
 
@@ -38,7 +38,7 @@ export default function Leaderboard() {
       const correctScorelines = userPreds.filter(pr => pr.is_score_correct).length
       const points = (predictions || []).filter(pr => pr.user_id === p.id).reduce((sum, pr) => sum + (pr.points_earned || 0), 0)
       return {
-        id: p.id, username: p.username, goldenBoot: p.golden_boot_pick,
+        id: p.id, username: p.first_name && p.last_name ? `${p.first_name} ${p.last_name}` : p.username, goldenBoot: p.golden_boot_pick,
         goldenBootCorrect: p.golden_boot_correct || false,
         matchesPredicted, correctResults, correctScorelines, points,
       }
