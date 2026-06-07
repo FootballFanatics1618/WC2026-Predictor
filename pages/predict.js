@@ -36,6 +36,48 @@ export default function Predict() {
     return () => clearInterval(t)
   }, [])
 
+  // Real-time subscription: when admin saves a result, update the match immediately
+  // so the prediction form locks without requiring a page refresh
+  useEffect(() => {
+    const channel = supabase
+      .channel('matches-live')
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'matches' },
+        (payload) => {
+          const updated = payload.new
+          setMatches(prev =>
+            prev.map(m => (m.id === updated.id ? { ...m, ...updated } : m))
+          )
+        }
+      )
+      .subscribe()
+
+    // Fallback poll every 30 seconds in case real-time is not enabled on the project
+    const poll = setInterval(async () => {
+      const { data } = await supabase
+        .from('matches')
+        .select('id, result, score_a, score_b')
+        .not('result', 'is', null)
+      if (data && data.length > 0) {
+        setMatches(prev => {
+          let changed = false
+          const next = prev.map(m => {
+            const fresh = data.find(d => d.id === m.id)
+            if (fresh && m.result !== fresh.result) { changed = true; return { ...m, ...fresh } }
+            return m
+          })
+          return changed ? next : prev
+        })
+      }
+    }, 30000)
+
+    return () => {
+      supabase.removeChannel(channel)
+      clearInterval(poll)
+    }
+  }, [])
+
   useEffect(() => { init() }, [])
 
   async function init() {

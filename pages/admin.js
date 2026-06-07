@@ -127,6 +127,7 @@ export default function Admin() {
     setMessage(`✅ ${match.team_a} ${scoreA}–${scoreB} ${match.team_b} saved! ${preds?.length || 0} predictions scored.`)
     await Promise.all([loadMatches(), loadStandings()])
     setSaving(s => ({ ...s, [match.id]: false }))
+    setShowCompleted(true) // auto-expand completed section so admin sees the match moved there
   }
 
   async function updateGroupStandings(match, result, scoreA, scoreB) {
