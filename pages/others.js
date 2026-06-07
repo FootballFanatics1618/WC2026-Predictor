@@ -37,10 +37,8 @@ export default function Others() {
     setLoading(false)
   }
 
-  // Only show dates where at least one match has started (today or past)
-  const visibleMatches = matches.filter(m =>
-    isToday(parseISO(m.match_date)) || isBefore(startOfDay(parseISO(m.match_date)), startOfDay(new Date()))
-  )
+  // Show ALL matches — predictions visible immediately (not gated by match date)
+  const visibleMatches = matches
 
   const byDate = {}
   visibleMatches.forEach(m => {
@@ -268,7 +266,7 @@ export default function Others() {
 
         {dates.length === 0 ? (
           <div className="card" style={{ textAlign: 'center', padding: '3rem', color: 'var(--gray-500)' }}>
-            No predictions visible yet — check back on June 11 when the tournament starts!
+            No matches found. Check back soon!
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
@@ -295,7 +293,7 @@ export default function Others() {
                 >
                   <div>
                     <div style={{ fontWeight: 600, fontSize: '1rem', color: isToday(parseISO(d)) ? 'var(--gold)' : 'var(--white)', marginBottom: '0.2rem' }}>
-                      {isToday(parseISO(d)) ? '⚡ Today — ' : ''}{format(parseISO(d), 'EEEE, MMMM d yyyy')}
+                      {isToday(parseISO(d)) ? '⚡ Today — ' : isBefore(startOfDay(parseISO(d)), startOfDay(new Date())) ? '' : '🗓 '}{format(parseISO(d), 'EEEE, MMMM d yyyy')}
                     </div>
                     <div style={{ fontSize: '0.825rem', color: 'var(--gray-500)' }}>
                       {total} match{total !== 1 ? 'es' : ''} · {completed} completed
