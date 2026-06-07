@@ -43,6 +43,7 @@ export default function Admin() {
   const [standings, setStandings] = useState([])
   const [resultForm, setResultForm] = useState({})
   const [saving, setSaving] = useState({})
+  const [editingMatch, setEditingMatch] = useState(null) // match being edited in completed section
   // Golden boot search+dropdown
   const [gbSearch, setGbSearch] = useState('')
   const [gbPick, setGbPick] = useState('')
@@ -339,12 +340,13 @@ export default function Admin() {
           </div>
         )}
 
-        {/* ── Golden Boot ───────────────────────────────────────────────── */}
+        {/* ── Golden Boot ────────────────────────────────────────────── */}
         <div className="card-gold" style={{marginBottom:'2rem'}}>
-          <h2 style={{fontFamily:'var(--font-display)',fontSize:'1.3rem',color:'var(--gold)',marginBottom:'0.75rem'}}>🥇 AWARD GOLDEN BOOT</h2>
-          <p style={{fontSize:'0.82rem',color:'var(--gray-500)',marginBottom:'0.75rem'}}>End of tournament only. Users who picked this player get +10 pts.</p>
-          <div style={{display:'flex',gap:'0.75rem',alignItems:'flex-end',flexWrap:'wrap'}}>
-            <div style={{flex:1,position:'relative'}}>
+          <h2 style={{fontFamily:'var(--font-display)',fontSize:'1.3rem',color:'var(--gold)',marginBottom:'0.5rem'}}>🥇 AWARD GOLDEN BOOT</h2>
+          <p style={{fontSize:'0.82rem',color:'var(--gray-500)',marginBottom:'0.9rem'}}>End of tournament only. Users who picked this player get +10 pts.</p>
+          {/* column layout so dropdown can overflow freely */}
+          <div style={{display:'flex',flexDirection:'column',gap:'0.75rem'}}>
+            <div style={{position:'relative'}}>
               <label className="form-label">Search Golden Boot Winner</label>
               <div style={{position:'relative'}}>
                 <input
@@ -353,7 +355,7 @@ export default function Admin() {
                   value={gbSearch}
                   onChange={e => { setGbSearch(e.target.value); setGbPick(''); setGbOpen(true) }}
                   onFocus={() => setGbOpen(true)}
-                  onBlur={() => setTimeout(() => setGbOpen(false), 150)}
+                  onBlur={() => setTimeout(() => setGbOpen(false), 200)}
                   style={{paddingRight: gbPick ? '2.2rem' : '0.9rem'}}
                 />
                 {gbPick && <span style={{position:'absolute',right:'0.7rem',top:'50%',transform:'translateY(-50%)',color:'#68d391',fontSize:'1rem'}}>✓</span>}
@@ -361,46 +363,57 @@ export default function Admin() {
               {gbPick && (
                 <div style={{fontSize:'0.78rem',color:'#68d391',marginTop:'0.3rem'}}>Selected: <strong>{gbPick}</strong></div>
               )}
+              {/* Dropdown portal — z-index 500 ensures it floats above everything */}
               {gbOpen && (() => {
                 const players = [...ALL_PLAYERS].sort().filter(p => !gbSearch || p.toLowerCase().includes(gbSearch.toLowerCase()))
                 return players.length > 0 ? (
                   <div style={{
                     position:'absolute',top:'calc(100% + 4px)',left:0,right:0,
-                    background:'var(--gray-900)',border:'1px solid rgba(245,200,66,0.3)',
-                    borderRadius:'var(--radius)',maxHeight:'220px',overflowY:'auto',
-                    zIndex:300,boxShadow:'0 8px 32px rgba(0,0,0,0.6)'
+                    background:'var(--gray-900)',border:'1px solid rgba(245,200,66,0.35)',
+                    borderRadius:'var(--radius)',maxHeight:'260px',overflowY:'auto',
+                    zIndex:500,boxShadow:'0 12px 40px rgba(0,0,0,0.7)'
                   }}>
-                    {players.slice(0,60).map(p => (
+                    {players.slice(0,80).map(p => (
                       <div
                         key={p}
-                        onMouseDown={() => { setGbPick(p); setGbSearch(p); setGbOpen(false) }}
+                        onMouseDown={e => { e.preventDefault(); setGbPick(p); setGbSearch(p); setGbOpen(false) }}
                         style={{
                           padding:'0.5rem 0.9rem',cursor:'pointer',fontSize:'0.875rem',
                           color: gbPick===p ? 'var(--gold)' : 'var(--white)',
-                          background: gbPick===p ? 'rgba(245,200,66,0.08)' : 'transparent',
+                          background: gbPick===p ? 'rgba(245,200,66,0.1)' : 'transparent',
                           borderBottom:'1px solid rgba(255,255,255,0.04)',
                           display:'flex',justifyContent:'space-between',
                         }}
                         onMouseEnter={e => e.currentTarget.style.background='rgba(255,255,255,0.07)'}
-                        onMouseLeave={e => e.currentTarget.style.background = gbPick===p ? 'rgba(245,200,66,0.08)' : 'transparent'}
+                        onMouseLeave={e => e.currentTarget.style.background = gbPick===p ? 'rgba(245,200,66,0.1)' : 'transparent'}
                       >
-                        {p} {gbPick===p && <span>✓</span>}
+                        {p} {gbPick===p && <span style={{color:'var(--gold)'}}>✓</span>}
                       </div>
                     ))}
-                    {players.length > 60 && (
+                    {players.length > 80 && (
                       <div style={{padding:'0.4rem 0.9rem',fontSize:'0.78rem',color:'var(--gray-500)',textAlign:'center'}}>
-                        Type more to narrow ({players.length} players)
+                        Type more to narrow… ({players.length} results)
                       </div>
                     )}
                   </div>
-                ) : null
+                ) : (
+                  <div style={{position:'absolute',top:'calc(100% + 4px)',left:0,right:0,background:'var(--gray-900)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:'var(--radius)',padding:'0.6rem 0.9rem',fontSize:'0.85rem',color:'var(--gray-500)',zIndex:500}}>
+                    No players found for “{gbSearch}”
+                  </div>
+                )
               })()}
             </div>
-            <button className="btn btn-primary" onClick={awardGoldenBoot} disabled={gbSaving || !gbPick}>
-              {gbSaving ? 'Awarding...' : '🥇 Award +10 pts'}
+            <button
+              className="btn btn-primary"
+              onClick={awardGoldenBoot}
+              disabled={gbSaving || !gbPick}
+              style={{alignSelf:'flex-start'}}
+            >
+              {gbSaving ? 'Awarding…' : '🥇 Award +10 pts'}
             </button>
           </div>
         </div>
+
 
         {/* ── Stage tabs ────────────────────────────────────────────────── */}
         <div style={{overflowX:'auto',marginBottom:'1.5rem'}}>
@@ -588,31 +601,109 @@ export default function Admin() {
 
             {showCompleted && (
               <div style={{display:'flex',flexDirection:'column',gap:'0.35rem'}}>
-                {completedOnDay.map(m => (
-                  <div
-                    key={m.id}
-                    className="card"
-                    style={{
-                      padding:'0.55rem 1.1rem',
-                      display:'flex',
-                      justifyContent:'space-between',
-                      alignItems:'center',
-                      opacity:0.7,
-                      border:'1px solid var(--gray-800)',
-                    }}
-                  >
-                    <div>
-                      <span style={{fontSize:'0.88rem',fontWeight:500}}>{m.team_a}</span>
-                      <span style={{color:'var(--gray-500)',margin:'0 0.4rem',fontSize:'0.8rem'}}>vs</span>
-                      <span style={{fontSize:'0.88rem',fontWeight:500}}>{m.team_b}</span>
-                      <span style={{fontSize:'0.73rem',color:'var(--gray-500)',marginLeft:'0.5rem'}}>{m.match_time}</span>
+                {completedOnDay.map(m => {
+                  const isEditing = editingMatch?.id === m.id
+                  const eform = resultForm[m.id] || {}
+                  return (
+                    <div
+                      key={m.id}
+                      className="card"
+                      style={{
+                        padding:'0.7rem 1.1rem',
+                        border: isEditing ? '1px solid var(--gold)' : '1px solid var(--gray-800)',
+                        background: isEditing ? 'rgba(245,200,66,0.05)' : undefined,
+                      }}
+                    >
+                      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:'0.5rem',marginBottom: isEditing ? '0.75rem' : 0}}>
+                        <div>
+                          <span style={{fontSize:'0.88rem',fontWeight:500}}>{m.team_a}</span>
+                          <span style={{color:'var(--gray-500)',margin:'0 0.4rem',fontSize:'0.8rem'}}>vs</span>
+                          <span style={{fontSize:'0.88rem',fontWeight:500}}>{m.team_b}</span>
+                          <span style={{fontSize:'0.73rem',color:'var(--gray-500)',marginLeft:'0.5rem'}}>{m.match_time}</span>
+                        </div>
+                        <div style={{display:'flex',alignItems:'center',gap:'0.5rem'}}>
+                          <span className="match-result-badge">{m.score_a}–{m.score_b}</span>
+                          {!isEditing && (
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              onClick={() => {
+                                setEditingMatch(m)
+                                setResultForm(prev => ({
+                                  ...prev,
+                                  [m.id]: {
+                                    result: m.result,
+                                    scoreA: String(m.score_a),
+                                    scoreB: String(m.score_b),
+                                  }
+                                }))
+                                setShowCompleted(true)
+                              }}
+                              style={{fontSize:'0.72rem',padding:'0.2rem 0.5rem'}}
+                            >
+                              ✏️ Edit
+                            </button>
+                          )}
+                          {isEditing && (
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              onClick={() => setEditingMatch(null)}
+                              style={{fontSize:'0.72rem',padding:'0.2rem 0.5rem',color:'var(--gray-500)'}}
+                            >
+                              Cancel
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Inline edit form */}
+                      {isEditing && (
+                        <div style={{display:'flex',alignItems:'center',gap:'0.6rem',flexWrap:'wrap'}}>
+                          <select
+                            className="form-select"
+                            style={{flex:'1 1 160px',minWidth:'140px'}}
+                            value={eform.result||''}
+                            onChange={e=>handleResultInput(m.id,'result',e.target.value)}
+                          >
+                            <option value="">— Result —</option>
+                            <option value="teamA">{m.team_a} Win</option>
+                            {m.stage==='Group Stage' && <option value="draw">Draw</option>}
+                            <option value="teamB">{m.team_b} Win</option>
+                          </select>
+                          <div style={{display:'flex',alignItems:'center',gap:'0.4rem'}}>
+                            <input
+                              className="form-input"
+                              style={{width:'60px',textAlign:'center'}}
+                              type="number" min="0"
+                              placeholder="A"
+                              value={eform.scoreA??''}
+                              onChange={e=>handleResultInput(m.id,'scoreA',e.target.value)}
+                            />
+                            <span style={{color:'var(--gray-500)',fontWeight:700}}>–</span>
+                            <input
+                              className="form-input"
+                              style={{width:'60px',textAlign:'center'}}
+                              type="number" min="0"
+                              placeholder="B"
+                              value={eform.scoreB??''}
+                              onChange={e=>handleResultInput(m.id,'scoreB',e.target.value)}
+                            />
+                          </div>
+                          <button
+                            className="btn btn-primary btn-sm"
+                            style={{minWidth:'80px'}}
+                            disabled={saving[m.id]}
+                            onClick={async () => {
+                              await saveResult(m)
+                              setEditingMatch(null)
+                            }}
+                          >
+                            {saving[m.id] ? '...' : '✓ Update'}
+                          </button>
+                        </div>
+                      )}
                     </div>
-                    <div style={{display:'flex',alignItems:'center',gap:'0.5rem'}}>
-                      <span className="match-result-badge">{m.score_a}–{m.score_b}</span>
-                      <span style={{fontSize:'0.7rem',color:'#68d391'}}>✓</span>
-                    </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             )}
           </div>
