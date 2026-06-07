@@ -6,6 +6,8 @@ import FlagImg from '../components/FlagImg'
 import { supabase } from '../lib/supabase'
 import { generateScorelines } from '../lib/data'
 import { toIST } from '../lib/flags'
+import { isMatchPredictionLocked, timeUntilLock, isGoldenBootLocked, GOLDEN_BOOT_LOCK } from '../lib/locktime'
+import { ALL_PLAYERS } from '../lib/data'
 import { format, parseISO, isToday, isBefore, startOfDay } from 'date-fns'
 
 export default function Predict() {
@@ -20,6 +22,62 @@ export default function Predict() {
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
   const [selectedUpcomingDate, setSelectedUpcomingDate] = useState(null)
+  const [now, setNow] = useState(new Date())
+  // Golden Boot inline state
+  const [gbSearch, setGbSearch] = useState('')
+  const [gbPick, setGbPick] = useState('')
+  const [gbOpen, setGbOpen] = useState(false)
+  const [gbSaving, setGbSaving] = useState(false)
+  const [gbMsg, setGbMsg] = useState('')
+  const [gbLocked, setGbLocked] = useState(false)
+
+  // Tick every minute to re-evaluate locks
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 60000)
+    return () => clearInterval(t)
+  }, [])
+
+  // Real-time subscription: when admin saves a result, update the match immediately
+  // so the prediction form locks without requiring a page refresh
+  useEffect(() => {
+    const channel = supabase
+      .channel('matches-live')
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'matches' },
+        (payload) => {
+          const updated = payload.new
+          setMatches(prev =>
+            prev.map(m => (m.id === updated.id ? { ...m, ...updated } : m))
+          )
+        }
+      )
+      .subscribe()
+
+    // Fallback poll every 30 seconds in case real-time is not enabled on the project
+    const poll = setInterval(async () => {
+      const { data } = await supabase
+        .from('matches')
+        .select('id, result, score_a, score_b')
+        .not('result', 'is', null)
+      if (data && data.length > 0) {
+        setMatches(prev => {
+          let changed = false
+          const next = prev.map(m => {
+            const fresh = data.find(d => d.id === m.id)
+            if (fresh && m.result !== fresh.result) { changed = true; return { ...m, ...fresh } }
+            return m
+          })
+          return changed ? next : prev
+        })
+      }
+    }, 30000)
+
+    return () => {
+      supabase.removeChannel(channel)
+      clearInterval(poll)
+    }
+  }, [])
 
   useEffect(() => { init() }, [])
 
@@ -27,36 +85,48 @@ export default function Predict() {
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) { router.push('/login'); return }
     setUser(session.user)
+
     const [profileRes, matchesRes, predsRes] = await Promise.all([
       supabase.from('profiles').select('*').eq('id', session.user.id).single(),
       supabase.from('matches').select('*').order('match_date').order('match_time'),
       supabase.from('predictions').select('*').eq('user_id', session.user.id),
     ])
+
     setProfile(profileRes.data)
     setMatches(matchesRes.data || [])
     const predsMap = {}
     ;(predsRes.data || []).forEach(p => { predsMap[p.match_id] = p })
     setSavedPredictions(predsMap)
     setLoading(false)
-    if (router.query.welcome) setMessage("🎉 Welcome! Now predict today's matches!")
-  }
-
-  // Lock 1 hour before kick-off — uses kickoff_utc from DB (server authoritative)
-  // RLS enforces the same rule server-side; this is the UI reflection
-  function isMatchLocked(match) {
-    if (!match.kickoff_utc) {
-      return isBefore(startOfDay(parseISO(match.match_date)), startOfDay(new Date()))
+    if (profileRes.data) {
+      setGbPick(profileRes.data.golden_boot_pick || '')
+      setGbSearch(profileRes.data.golden_boot_pick || '')
     }
-    const lockTime = new Date(new Date(match.kickoff_utc).getTime() - 60 * 60 * 1000)
-    return new Date() >= lockTime
+    setGbLocked(isGoldenBootLocked())
+    if (router.query.welcome) setMessage("🎉 Welcome! Set your Golden Boot pick on the home page, then predict matches here!")
   }
 
+  // A match is in "past days" if its date is strictly before today
+  function isPastDay(match) {
+    return isBefore(startOfDay(parseISO(match.match_date)), startOfDay(new Date()))
+  }
   function isMatchToday(match) { return isToday(parseISO(match.match_date)) }
   function isMatchCompleted(match) { return match.result !== null }
 
+  // Prediction lock: 1 hour before kick-off OR if result already entered
+  function isPredLocked(match) {
+    if (isMatchCompleted(match)) return true
+    return isMatchPredictionLocked(match.match_date, match.match_time)
+  }
+
+  // Tabs:
+  // Today: matches today
+  // Upcoming: future dates (not today)
+  // Completed: matches with result entered
   const todayMatches = matches.filter(m => isMatchToday(m))
-  const upcomingMatches = matches.filter(m => !isMatchToday(m) && !isBefore(startOfDay(parseISO(m.match_date)), startOfDay(new Date())))
-  const completedMatches = matches.filter(m => isBefore(startOfDay(parseISO(m.match_date)), startOfDay(new Date())) || isMatchCompleted(m))
+  const upcomingMatches = matches.filter(m => !isMatchToday(m) && !isPastDay(m))
+  // Completed = has a result
+  const completedMatches = matches.filter(m => isMatchCompleted(m))
 
   const upcomingByDate = {}
   upcomingMatches.forEach(m => {
@@ -83,6 +153,7 @@ export default function Predict() {
   }
 
   async function savePrediction(match) {
+    if (isPredLocked(match)) { alert('This match is locked for predictions.'); return }
     const pred = predictions[match.id]
     if (!pred?.result || pred.scoreA === '' || pred.scoreB === '') {
       alert('Please select both a result and scoreline.')
@@ -112,8 +183,8 @@ export default function Predict() {
   }
 
   function MatchCard({ match }) {
-    const locked = isMatchLocked(match)
     const completed = isMatchCompleted(match)
+    const predLocked = isPredLocked(match)
     const saved = savedPredictions[match.id]
     const local = predictions[match.id]
     const pred = local || (saved ? { result: saved.predicted_result, scoreA: saved.predicted_score_a, scoreB: saved.predicted_score_b } : null)
@@ -121,67 +192,71 @@ export default function Predict() {
     const currentScoreline = pred?.scoreA !== undefined && pred?.scoreB !== undefined ? `${pred.scoreA}-${pred.scoreB}` : ''
     const isCorrectResult = completed && saved && saved.is_result_correct
     const isCorrectScore = completed && saved && saved.is_score_correct
+    const lockCountdown = !predLocked ? timeUntilLock(match.match_date, match.match_time) : null
+    const hasPrediction = !!saved
 
     return (
-      <div className={`match-card ${locked ? 'locked' : ''} ${completed ? 'completed' : ''} ${saved && !completed ? 'predicted' : ''}`}
-        style={{ padding: '1rem 1.1rem' }}>
+      <div className={`match-card ${completed ? 'completed' : ''} ${hasPrediction && !completed ? 'predicted' : ''}`}
+        style={{ width: '100%', boxSizing: 'border-box' }}>
 
-        {/* Top row */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.2rem', gap: '0.4rem' }}>
-          <span style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--gray-500)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-            {match.stage}{match.group_name ? ` · Group ${match.group_name}` : ''}
-          </span>
-          <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'nowrap', flexShrink: 0 }}>
+        {/* Top bar: stage/time + status */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.6rem', flexWrap: 'wrap', gap: '0.4rem' }}>
+          <div>
+            <span style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--gray-500)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+              {match.stage}{match.group_name ? ` · Group ${match.group_name}` : ''}
+            </span>
+            <div style={{ fontSize: '0.78rem', color: 'var(--gray-500)', marginTop: '0.1rem', lineHeight: 1.4 }}>
+              {format(parseISO(match.match_date), 'EEE, MMM d')} · {toIST(match.match_time)}
+            </div>
+            <div style={{ fontSize: '0.72rem', color: 'var(--gray-500)' }}>{match.venue}</div>
+          </div>
+          <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            {hasPrediction && !completed && (
+              <span style={{ fontSize: '1rem', color: 'var(--success)', lineHeight: 1 }} title="Prediction saved">✅</span>
+            )}
             {completed && (
               <>
-                {isCorrectScore && <span className="points-chip points-5">+5 pts ⚡</span>}
-                {isCorrectResult && !isCorrectScore && <span className="points-chip points-3">+3 pts ✓</span>}
-                {!isCorrectResult && saved && <span className="points-chip points-0">0 pts</span>}
+                {isCorrectScore && <span className="points-chip points-5">+5 ⚡</span>}
+                {isCorrectResult && !isCorrectScore && <span className="points-chip points-3">+3 ✓</span>}
+                {!isCorrectResult && saved && <span className="points-chip points-0">0</span>}
               </>
             )}
-            {/* Green tick if predicted and not completed */}
-            {!completed && saved && <span style={{ fontSize: '1rem', color: 'var(--success)' }}>✅</span>}
-            {locked && <span className="lock-chip">🔒</span>}
+            {predLocked && !completed && <span className="lock-chip">🔒 Locked</span>}
+            {lockCountdown && <span style={{ fontSize: '0.72rem', color: '#f6ad55', background: 'rgba(246,173,85,0.12)', padding: '2px 7px', borderRadius: '99px' }}>{lockCountdown}</span>}
           </div>
         </div>
-        <div style={{ fontSize: '0.78rem', color: 'var(--gold)', marginBottom: '0.15rem', width: '100%', fontWeight: 600 }}>
-          {format(parseISO(match.match_date), 'EEE, MMM d')} · {toIST(match.match_time)}
-        </div>
-        <div style={{ fontSize: '0.78rem', color: 'var(--gray-500)', marginBottom: '0.75rem', width: '100%' }}>
-          {match.venue}
-        </div>
 
-        {/* Teams row */}
-        <div className="match-teams" style={{ fontSize: 'clamp(1.1rem, 4vw, 1.5rem)', gap: '0.75rem', marginBottom: '0.75rem' }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0, flex: 1, justifyContent: 'flex-end' }}>
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{match.team_a}</span>
-            <FlagImg team={match.team_a} size={24} />
+        {/* Teams — large, centered */}
+        <div className="match-teams">
+          <span style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, justifyContent: 'flex-end' }}>
+            <span style={{ textAlign: 'right' }}>{match.team_a}</span>
+            <FlagImg team={match.team_a} size={26} />
           </span>
-          <span className="match-vs" style={{ flexShrink: 0, fontSize: '0.9rem' }}>vs</span>
-          <span style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0, flex: 1, justifyContent: 'flex-start' }}>
-            <FlagImg team={match.team_b} size={24} />
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{match.team_b}</span>
+          <span className="match-vs" style={{ flexShrink: 0 }}>vs</span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, justifyContent: 'flex-start' }}>
+            <FlagImg team={match.team_b} size={26} />
+            <span>{match.team_b}</span>
           </span>
         </div>
 
-        {/* Completed: actual result */}
+        {/* Completed result */}
         {completed && (
-          <div style={{ textAlign: 'center', marginBottom: '0.75rem' }}>
-            <span className="match-result-badge">Result: {match.score_a}–{match.score_b}</span>
+          <div style={{ textAlign: 'center', marginBottom: '0.6rem' }}>
+            <span className="match-result-badge" style={{ fontSize: '1rem', padding: '0.3rem 1rem' }}>
+              {match.score_a} – {match.score_b}
+            </span>
             {saved && (
-              <div style={{ marginTop: '0.35rem', fontSize: '0.82rem', color: 'var(--gray-500)' }}>
-                Your pick: <strong style={{ color: 'var(--white)' }}>
-                  {getResultLabel(saved.predicted_result, match.team_a, match.team_b)} {saved.predicted_score_a}–{saved.predicted_score_b}
-                </strong>
+              <div style={{ marginTop: '0.4rem', fontSize: '0.82rem', color: 'var(--gray-500)' }}>
+                Your pick: {getResultLabel(saved.predicted_result, match.team_a, match.team_b)} {saved.predicted_score_a}–{saved.predicted_score_b}
               </div>
             )}
           </div>
         )}
 
-        {/* Prediction inputs */}
-        {!locked && !completed && (
-          <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-            <div style={{ flex: '1 1 150px', minWidth: '140px' }}>
+        {/* Prediction inputs — stacked on mobile */}
+        {!predLocked && !completed && (
+          <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'flex-end', flexWrap: 'wrap', marginTop: '0.5rem' }}>
+            <div style={{ flex: '1 1 140px', minWidth: 0 }}>
               <label className="form-label">Result</label>
               <select className="form-select" value={pred?.result || ''} onChange={e => handleResultChange(match.id, e.target.value)}>
                 <option value="">— Pick result —</option>
@@ -190,7 +265,7 @@ export default function Predict() {
                 <option value="teamB">{match.team_b} Win</option>
               </select>
             </div>
-            <div style={{ flex: '1 1 120px', minWidth: '110px' }}>
+            <div style={{ flex: '1 1 110px', minWidth: 0 }}>
               <label className="form-label">Scoreline</label>
               <select className="form-select" value={currentScoreline} onChange={e => handleScorelineChange(match.id, e.target.value)} disabled={!pred?.result}>
                 <option value="">— Score —</option>
@@ -198,32 +273,44 @@ export default function Predict() {
               </select>
             </div>
             <button
-              className={`btn btn-sm ${saved ? 'btn-outline-gold' : 'btn-primary'}`}
+              className="btn btn-primary btn-sm"
               onClick={() => savePrediction(match)}
               disabled={saving[match.id]}
-              style={{ whiteSpace: 'nowrap', marginBottom: '2px', flexShrink: 0 }}
+              style={{ whiteSpace: 'nowrap', flexShrink: 0, marginBottom: '2px' }}
             >
-              {saving[match.id] ? '...' : saved ? '✎ Update' : 'Save'}
+              {saving[match.id] ? '...' : saved ? '✓ Update' : 'Save'}
             </button>
           </div>
         )}
 
-        {locked && !completed && saved && (
-          <div style={{ fontSize: '0.85rem', color: 'var(--gray-500)' }}>
-            Locked: <strong style={{ color: 'var(--white)' }}>
+        {/* Locked with a saved prediction */}
+        {predLocked && !completed && saved && (
+          <div style={{ fontSize: '0.85rem', color: 'var(--gray-500)', marginTop: '0.4rem' }}>
+            Your pick: <strong style={{ color: 'var(--white)' }}>
               {getResultLabel(saved.predicted_result, match.team_a, match.team_b)} — {saved.predicted_score_a}–{saved.predicted_score_b}
             </strong>
           </div>
         )}
-        {locked && !completed && !saved && (
-          <div style={{ fontSize: '0.85rem', color: 'var(--danger)' }}>❌ No prediction made</div>
+        {predLocked && !completed && !saved && (
+          <div style={{ fontSize: '0.85rem', color: 'var(--danger)', marginTop: '0.4rem' }}>❌ No prediction — window closed</div>
         )}
       </div>
     )
   }
 
+  // Check if all matches on a date have predictions
+  function dateFullyPredicted(matchList) {
+    return matchList.every(m => isPredLocked(m) || !!savedPredictions[m.id])
+  }
+  function dateAllSaved(matchList) {
+    // green tick only when every non-locked match has a save
+    const unlocked = matchList.filter(m => !isPredLocked(m) && !isMatchCompleted(m))
+    if (unlocked.length === 0) return false // nothing to predict
+    return unlocked.every(m => !!savedPredictions[m.id])
+  }
+
   if (loading) return (
-    <><Navbar user={user} /><div className="page" style={{ textAlign: 'center', paddingTop: '5rem', color: 'var(--gray-500)' }}>Loading matches...</div></>
+    <><Navbar user={user} /><div style={{ textAlign: 'center', paddingTop: '5rem', color: 'var(--gray-500)' }}>Loading matches...</div></>
   )
 
   const todayDone = allPredicted(todayMatches)
@@ -231,44 +318,94 @@ export default function Predict() {
   return (
     <>
       <Navbar user={user} />
-      {/* Full width on mobile — no max-width cap on predict page */}
-      <div style={{ width: '100%', maxWidth: '720px', margin: '0 auto', padding: '1.25rem 0.75rem' }}>
+      {/* Full-width container — no max-width cap for predict page */}
+      <div style={{ padding: '1.5rem', maxWidth: '100%', boxSizing: 'border-box' }}>
         {message && (
-          <div className="alert alert-success" style={{ marginBottom: '1.25rem' }}>
+          <div className="alert alert-success" style={{ maxWidth: '700px', margin: '0 auto 1.5rem' }}>
             {message}
             <button onClick={() => setMessage('')} style={{ marginLeft: '1rem', background: 'none', border: 'none', color: 'inherit', cursor: 'pointer' }}>×</button>
           </div>
         )}
-        <div style={{ fontWeight: 700, color: 'var(--gold)', marginBottom: '1.25rem' }}>👋 {profile.username}</div>
+
         {profile && (
-          <div className="card-gold" style={{ marginBottom: '1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
-            {profile.golden_boot_pick ? (
-              <div>
-                
-                <div style={{ color: 'var(--gray-500)', fontSize: '0.85rem', marginTop: '0.15rem' }}>
-                  🥇 Golden Boot: <strong style={{ color: 'var(--white)' }}>{profile.golden_boot_pick}</strong>
-                </div>
+          <div className="card-gold" style={{ maxWidth: '700px', margin: '0 auto 1.5rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.9rem' }}>
+              <span style={{ fontWeight: 700, color: 'var(--gold)', fontSize: '1rem' }}>👋 {profile.first_name || profile.username}</span>
+              {gbLocked
+                ? <span className="lock-chip">🔒 Golden Boot locked</span>
+                : <span style={{ fontSize: '0.75rem', color: '#f6ad55', background: 'rgba(246,173,85,0.12)', padding: '2px 8px', borderRadius: '99px' }}>
+                    ⚠️ Freezes Jun 10, 11:30 PM IST — 1hr before tournament
+                  </span>
+              }
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+              <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--gray-300)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>🥇 Golden Boot Pick</span>
+              <span style={{ fontSize: '0.78rem', color: 'var(--gray-500)' }}>— +10 pts if correct</span>
+            </div>
+
+            {gbLocked ? (
+              <div style={{ padding: '0.6rem 0.9rem', background: 'rgba(255,255,255,0.04)', borderRadius: 'var(--radius)', fontSize: '0.925rem', color: 'var(--white)', fontWeight: 600 }}>
+                {profile.golden_boot_pick || <span style={{ color: 'var(--gray-500)' }}>No pick was made before lock</span>}
               </div>
             ) : (
-              <div style={{ flex: 1, minWidth: 0 }}>
-                
-                
-                  <div style={{ color: 'var(--white)', fontWeight: 600, marginBottom: '0.25rem' }}>Golden Boot not selected yet</div>
-                  <div style={{ color: 'var(--gray-500)', fontSize: '0.85rem', lineHeight: 1.5 }}>
-                    Pick your tournament top scorer to unlock the bonus points tracker.
+              <div style={{ position: 'relative' }}>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <div style={{ flex: 1, position: 'relative' }}>
+                    <input
+                      className="form-input"
+                      placeholder="Search player name..."
+                      value={gbSearch}
+                      onChange={e => { setGbSearch(e.target.value); setGbPick(''); setGbOpen(true) }}
+                      onFocus={() => setGbOpen(true)}
+                      onBlur={() => setTimeout(() => setGbOpen(false), 150)}
+                      style={{ paddingRight: gbPick ? '2.2rem' : '0.9rem' }}
+                    />
+                    {gbPick && <span style={{ position: 'absolute', right: '0.7rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--success)' }}>✓</span>}
                   </div>
+                  <button
+                    className="btn btn-primary btn-sm"
+                    style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                    disabled={gbSaving || !gbPick}
+                    onClick={async () => {
+                      if (!gbPick) return
+                      setGbSaving(true)
+                      const { error } = await supabase.from('profiles').update({ golden_boot_pick: gbPick }).eq('id', user.id)
+                      if (!error) { setProfile(p => ({ ...p, golden_boot_pick: gbPick })); setGbMsg('✅ Saved!') }
+                      else setGbMsg('❌ Error saving')
+                      setGbSaving(false)
+                      setTimeout(() => setGbMsg(''), 2500)
+                    }}
+                  >
+                    {gbSaving ? '...' : profile.golden_boot_pick ? 'Update' : 'Save Pick'}
+                  </button>
                 </div>
-              
+                {gbMsg && <div style={{ fontSize: '0.8rem', marginTop: '0.4rem', color: gbMsg.startsWith('✅') ? 'var(--success)' : 'var(--danger)' }}>{gbMsg}</div>}
+                {gbOpen && (() => {
+                  const players = [...ALL_PLAYERS].sort().filter(p => !gbSearch || p.toLowerCase().includes(gbSearch.toLowerCase()))
+                  return players.length > 0 ? (
+                    <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: '90px', background: 'var(--gray-900)', border: '1px solid rgba(245,200,66,0.3)', borderRadius: 'var(--radius)', maxHeight: '200px', overflowY: 'auto', zIndex: 300, boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}>
+                      {players.slice(0, 60).map(p => (
+                        <div key={p} onMouseDown={() => { setGbPick(p); setGbSearch(p); setGbOpen(false) }}
+                          style={{ padding: '0.5rem 0.9rem', cursor: 'pointer', fontSize: '0.875rem', color: gbPick === p ? 'var(--gold)' : 'var(--white)', background: gbPick === p ? 'rgba(245,200,66,0.08)' : 'transparent', borderBottom: '1px solid rgba(255,255,255,0.04)', display: 'flex', justifyContent: 'space-between' }}
+                          onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.07)'}
+                          onMouseLeave={e => e.currentTarget.style.background = gbPick === p ? 'rgba(245,200,66,0.08)' : 'transparent'}
+                        >
+                          {p} {gbPick === p && <span>✓</span>}
+                        </div>
+                      ))}
+                      {players.length > 60 && <div style={{ padding: '0.4rem 0.9rem', fontSize: '0.78rem', color: 'var(--gray-500)', textAlign: 'center' }}>Type more to narrow ({players.length} players)</div>}
+                    </div>
+                  ) : null
+                })()}
+              </div>
             )}
-            <Link href="/golden-boot" className={`btn btn-sm ${profile.golden_boot_pick ? 'btn-ghost' : 'btn-primary'}`}>
-              {profile.golden_boot_pick ? 'Edit' : 'Choose GB player'}
-            </Link>
           </div>
         )}
 
-        <h1 className="section-title">MATCH PREDICTIONS</h1>
+        <h1 className="section-title" style={{ maxWidth: '700px', margin: '0 auto 1rem' }}>MATCH PREDICTIONS</h1>
 
-        <div className="tabs">
+        <div className="tabs" style={{ maxWidth: '700px', margin: '0 auto 1.5rem' }}>
           <button className={`tab-btn ${tab === 'today' ? 'active' : ''}`} onClick={() => setTab('today')}>
             Today {todayMatches.length > 0 && (todayDone ? '✅' : `(${todayMatches.length})`)}
           </button>
@@ -280,18 +417,22 @@ export default function Predict() {
           </button>
         </div>
 
+        {/* TODAY */}
         {tab === 'today' && (
           todayMatches.length === 0
-            ? <div className="card" style={{ textAlign: 'center', padding: '3rem', color: 'var(--gray-500)' }}>No matches today. Check upcoming!</div>
-            : <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>{todayMatches.map(m => <MatchCard key={m.id} match={m} />)}</div>
+            ? <div className="card" style={{ maxWidth: '700px', margin: '0 auto', textAlign: 'center', padding: '3rem', color: 'var(--gray-500)' }}>No matches today. Check upcoming!</div>
+            : <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxWidth: '700px', margin: '0 auto' }}>
+                {todayMatches.map(m => <MatchCard key={m.id} match={m} />)}
+              </div>
         )}
 
+        {/* UPCOMING — date chips + matches */}
         {tab === 'upcoming' && (
           upcomingDates.length === 0
-            ? <div className="card" style={{ textAlign: 'center', padding: '3rem', color: 'var(--gray-500)' }}>No upcoming matches.</div>
+            ? <div className="card" style={{ maxWidth: '700px', margin: '0 auto', textAlign: 'center', padding: '3rem', color: 'var(--gray-500)' }}>No upcoming matches.</div>
             : <>
-                {/* Date chips — green tick replaces count if all predicted */}
-                <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
+                {/* Date chip strip — with partial prediction coloring */}
+                <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '1.25rem', maxWidth: '700px', margin: '0 auto 1.25rem' }}>
                   {upcomingDates.map(d => {
                     const isSelected = selectedUpcomingDate === d
                     const dayMatches = upcomingByDate[d]
@@ -300,16 +441,20 @@ export default function Predict() {
                     const partial = !done && predictedCount > 0
                     return (
                       <button key={d} onClick={() => setSelectedUpcomingDate(d)} style={{
-                        padding: '0.4rem 0.875rem', borderRadius: '99px', cursor: 'pointer',
+                        padding: '0.4rem 0.85rem',
+                        borderRadius: '99px',
+                        cursor: 'pointer',
                         border: isSelected ? '1.5px solid var(--gold)' : '1px solid rgba(255,255,255,0.12)',
                         background: isSelected ? 'rgba(245,200,66,0.12)' : 'transparent',
                         color: isSelected ? 'var(--gold)' : 'var(--gray-300)',
-                        fontSize: '0.82rem', fontWeight: isSelected ? 700 : 400, whiteSpace: 'nowrap',
+                        fontSize: '0.82rem',
+                        fontWeight: isSelected ? 700 : 400,
+                        whiteSpace: 'nowrap',
                         display: 'flex', alignItems: 'center', gap: '5px',
                       }}>
                         {format(parseISO(d), 'EEE, MMM d')}
                         {done
-                          ? <span style={{ fontSize: '0.85rem' }}>✅</span>
+                          ? <span style={{ fontSize: '0.85rem', color: 'var(--success)' }}>✅</span>
                           : <span style={{
                               fontSize: '0.7rem', borderRadius: '99px', padding: '1px 6px',
                               background: partial ? 'rgba(56,161,105,0.2)' : 'rgba(255,255,255,0.08)',
@@ -322,9 +467,10 @@ export default function Predict() {
                     )
                   })}
                 </div>
+
                 {selectedUpcomingDate && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                    <div style={{ fontSize: '0.82rem', color: 'var(--gray-500)', marginBottom: '-0.1rem' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxWidth: '700px', margin: '0 auto' }}>
+                    <div style={{ fontSize: '0.82rem', color: 'var(--gray-500)' }}>
                       {format(parseISO(selectedUpcomingDate), 'EEEE, MMMM d yyyy')} · {upcomingByDate[selectedUpcomingDate].length} matches
                     </div>
                     {upcomingByDate[selectedUpcomingDate].map(m => <MatchCard key={m.id} match={m} />)}
@@ -333,10 +479,13 @@ export default function Predict() {
               </>
         )}
 
+        {/* COMPLETED */}
         {tab === 'completed' && (
           completedMatches.length === 0
-            ? <div className="card" style={{ textAlign: 'center', padding: '3rem', color: 'var(--gray-500)' }}>No completed matches yet.</div>
-            : <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>{[...completedMatches].reverse().map(m => <MatchCard key={m.id} match={m} />)}</div>
+            ? <div className="card" style={{ maxWidth: '700px', margin: '0 auto', textAlign: 'center', padding: '3rem', color: 'var(--gray-500)' }}>No completed matches yet.</div>
+            : <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxWidth: '700px', margin: '0 auto' }}>
+                {[...completedMatches].reverse().map(m => <MatchCard key={m.id} match={m} />)}
+              </div>
         )}
       </div>
     </>

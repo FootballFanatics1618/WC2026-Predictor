@@ -275,3 +275,78 @@ insert into public.matches (id, match_date, match_time, team_a, team_b, group_na
 
 -- Mark the Final match
 update public.matches set is_final = true where id = 104;
+
+-- ============================================================
+-- SCHEMA ADDITIONS v4 (run only if upgrading from v3)
+-- ============================================================
+
+-- Group standings table (stores live W/D/L/GD/Pts per team per group)
+create table if not exists public.group_standings (
+  id uuid default gen_random_uuid() primary key,
+  group_name text not null,
+  team text not null,
+  played integer default 0,
+  won integer default 0,
+  drawn integer default 0,
+  lost integer default 0,
+  goals_for integer default 0,
+  goals_against integer default 0,
+  points integer default 0,
+  updated_at timestamp with time zone default timezone('utc', now()),
+  unique(group_name, team)
+);
+
+alter table public.group_standings enable row level security;
+create policy "standings_read_all" on public.group_standings for select using (true);
+create policy "standings_insert_all" on public.group_standings for insert with check (true);
+create policy "standings_update_all" on public.group_standings for update using (true);
+create policy "standings_delete_all" on public.group_standings for delete using (true);
+
+-- Add first_name / last_name columns to profiles if not present
+alter table public.profiles add column if not exists first_name text;
+alter table public.profiles add column if not exists last_name text;
+
+-- ============================================================
+-- RUN THIS BLOCK if upgrading from v3 (safe to re-run)
+-- ============================================================
+
+-- group_standings: persists live W/D/L/GD/Pts per team
+create table if not exists public.group_standings (
+  group_name text not null,
+  team text not null,
+  played integer default 0,
+  won integer default 0,
+  drawn integer default 0,
+  lost integer default 0,
+  goals_for integer default 0,
+  goals_against integer default 0,
+  points integer default 0,
+  updated_at timestamp with time zone default timezone('utc', now()),
+  primary key (group_name, team)
+);
+alter table public.group_standings enable row level security;
+drop policy if exists "standings_read_all" on public.group_standings;
+drop policy if exists "standings_write_all" on public.group_standings;
+create policy "standings_read_all" on public.group_standings for select using (true);
+create policy "standings_write_all" on public.group_standings for all using (true);
+
+-- first_name / last_name on profiles
+alter table public.profiles add column if not exists first_name text;
+alter table public.profiles add column if not exists last_name text;
+
+-- Seed group_standings rows for all 48 teams
+-- (initial zeros; updated by admin after each match)
+insert into public.group_standings (group_name, team) values
+('A','Mexico'),('A','South Korea'),('A','Czechia'),('A','South Africa'),
+('B','Switzerland'),('B','Canada'),('B','Qatar'),('B','Bosnia and Herzegovina'),
+('C','Brazil'),('C','Morocco'),('C','Haiti'),('C','Scotland'),
+('D','USA'),('D','Turkey'),('D','Australia'),('D','Paraguay'),
+('E','Germany'),('E','Ecuador'),('E','Ivory Coast'),('E','Curacao'),
+('F','Netherlands'),('F','Japan'),('F','Sweden'),('F','Tunisia'),
+('G','Belgium'),('G','Egypt'),('G','Iran'),('G','New Zealand'),
+('H','Spain'),('H','Cape Verde'),('H','Saudi Arabia'),('H','Uruguay'),
+('I','France'),('I','Senegal'),('I','Iraq'),('I','Norway'),
+('J','Argentina'),('J','Algeria'),('J','Austria'),('J','Jordan'),
+('K','Portugal'),('K','DR Congo'),('K','Uzbekistan'),('K','Colombia'),
+('L','England'),('L','Croatia'),('L','Ghana'),('L','Panama')
+on conflict (group_name, team) do nothing;
