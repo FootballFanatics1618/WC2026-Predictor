@@ -1,5 +1,5 @@
 const { test, expect } = require('@playwright/test')
-const { BASE_URL } = require('../config')
+const { BASE_URL, USER_EMAIL, USER_PASSWORD } = require('../config')
 
 async function loginAs(page, email, password) {
   await page.goto(`${BASE_URL}/login`)
@@ -13,7 +13,7 @@ test.describe('Section 9 — Mobile Responsive', () => {
   test('9.1 — Navbar links are on a single line and horizontally scrollable', async ({ page }) => {
     test.skip(page.viewportSize().width >= 760, 'Desktop viewport — nav overflow only applies at <760px')
 
-    await loginAs(page, 'achintyakarapurkar@gmail.com', 'worldcup2026')
+    await loginAs(page, USER_EMAIL, USER_PASSWORD)
     await page.goto(`${BASE_URL}/predict`)
 
     const nav = page.locator('nav')
@@ -31,7 +31,7 @@ test.describe('Section 9 — Mobile Responsive', () => {
   })
 
   test('9.2 — Sign-out icon renders as SVG on mobile', async ({ page }) => {
-    await loginAs(page, 'achintyakarapurkar@gmail.com', 'worldcup2026')
+    await loginAs(page, USER_EMAIL, USER_PASSWORD)
     await page.goto(`${BASE_URL}/predict`)
 
     const svgIcon = page.locator('.nav-btn-icon svg')
@@ -42,7 +42,7 @@ test.describe('Section 9 — Mobile Responsive', () => {
   })
 
   test('9.3 — Predict page date chips are horizontally scrollable', async ({ page }) => {
-    await loginAs(page, 'achintyakarapurkar@gmail.com', 'worldcup2026')
+    await loginAs(page, USER_EMAIL, USER_PASSWORD)
     await page.goto(`${BASE_URL}/predict`)
 
     const upcomingTab = page.locator('button.tab-btn', { hasText: 'Upcoming' })

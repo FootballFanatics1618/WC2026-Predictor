@@ -59,9 +59,9 @@ describe('Section 1 — Prediction Lock (API)', () => {
     expect(isLocked).toBe(true)
 
     const { createClient } = require('@supabase/supabase-js')
-    const { SUPABASE_URL, SUPABASE_ANON_KEY } = require('../config')
+    const { SUPABASE_URL, SUPABASE_ANON_KEY, USER_EMAIL, USER_PASSWORD } = require('../config')
     const freshClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
-    await freshClient.auth.signInWithPassword({ email: 'achintyakarapurkar@gmail.com', password: 'worldcup2026' })
+    await freshClient.auth.signInWithPassword({ email: USER_EMAIL, password: USER_PASSWORD })
 
     const { data, error } = await freshClient.from('predictions').upsert({
       user_id: userId,
