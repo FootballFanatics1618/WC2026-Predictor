@@ -91,43 +91,52 @@ export default function Admin() {
     if (form.result === 'teamB' && diff >= 0) { alert("Score doesn't match Team B win"); setSaving(s=>({...s,[match.id]:false})); return }
     if (form.result === 'draw' && diff !== 0) { alert("Score doesn't match Draw"); setSaving(s=>({...s,[match.id]:false})); return }
 
-    // Save result to match
+    // ── 1. Save result to match ──────────────────────────────────────────────
     const { error: mErr } = await supabase.from('matches').update({
       result: form.result, score_a: scoreA, score_b: scoreB,
     }).eq('id', match.id)
-    if (mErr) { alert('Error: ' + mErr.message); setSaving(s=>({...s,[match.id]:false})); return }
+    if (mErr) {
+      alert(`❌ Could not save match result.\n\nError: ${mErr.message}\n\nMake sure you ran admin-rls-fix.sql in your Supabase SQL Editor.`)
+      setSaving(s=>({...s,[match.id]:false}))
+      return
+    }
 
-    // Score predictions
-    const { data: preds } = await supabase.from('predictions').select('*').eq('match_id', match.id)
+    // ── 2. Score every prediction for this match ─────────────────────────────
+    const { data: preds, error: pErr } = await supabase.from('predictions').select('*').eq('match_id', match.id)
+    if (pErr) console.error('Could not fetch predictions:', pErr.message)
+    let scoredCount = 0
     for (const pred of (preds || [])) {
       const rc = pred.predicted_result === form.result
       const sc = rc && pred.predicted_score_a === scoreA && pred.predicted_score_b === scoreB
-      await supabase.from('predictions').update({
+      const { error: uErr } = await supabase.from('predictions').update({
         is_result_correct: rc, is_score_correct: sc, points_earned: sc ? 5 : rc ? 3 : 0,
       }).eq('id', pred.id)
+      if (!uErr) scoredCount++
+      else console.error('Prediction update failed:', uErr.message)
     }
 
-    // Update group standings if group stage match
+    // ── 3. Update group standings if group stage match ───────────────────────
     if (match.stage === 'Group Stage' && match.group_name) {
-      await updateGroupStandings(match, form.result, scoreA, scoreB)
+      const sErr = await updateGroupStandings(match, form.result, scoreA, scoreB)
+      if (sErr) console.error('Standings update failed:', sErr)
     }
 
-    // Knockout progression
+    // ── 4. Knockout progression ──────────────────────────────────────────────
     if (match.stage !== 'Group Stage') {
       await resolveKnockoutProgression(match, form.result)
     }
 
-    // After group stage fully done, propagate all group winners/runners to R32
+    // ── 5. After all 72 group games, propagate winners to R32 ────────────────
     const { data: freshMatches } = await supabase.from('matches').select('*').order('match_date').order('match_time')
     const groupDone = (freshMatches || []).filter(m => m.stage === 'Group Stage' && m.result !== null).length
     if (match.stage === 'Group Stage' && groupDone === 72) {
       await propagateAllGroupWinners(freshMatches || [])
     }
 
-    setMessage(`✅ ${match.team_a} ${scoreA}–${scoreB} ${match.team_b} saved! ${preds?.length || 0} predictions scored.`)
+    setMessage(`✅ ${match.team_a} ${scoreA}–${scoreB} ${match.team_b} saved! ${scoredCount}/${preds?.length || 0} predictions scored.`)
     await Promise.all([loadMatches(), loadStandings()])
     setSaving(s => ({ ...s, [match.id]: false }))
-    setShowCompleted(true) // auto-expand completed section so admin sees the match moved there
+    setShowCompleted(true)
   }
 
   async function updateGroupStandings(match, result, scoreA, scoreB) {
@@ -135,23 +144,29 @@ export default function Admin() {
     const tA = match.team_a
     const tB = match.team_b
 
-    const { data: rows } = await supabase.from('group_standings')
-      .select('*').eq('group_name', g).in('team', [tA, tB])
+    const { data: rows, error: fetchErr } = await supabase.from('group_standings')
+      .select('played,won,drawn,lost,goals_for,goals_against,points,group_name,team')
+      .eq('group_name', g).in('team', [tA, tB])
+    if (fetchErr) return fetchErr.message
 
     const rowA = rows?.find(r => r.team === tA) || { played:0,won:0,drawn:0,lost:0,goals_for:0,goals_against:0,points:0 }
     const rowB = rows?.find(r => r.team === tB) || { played:0,won:0,drawn:0,lost:0,goals_for:0,goals_against:0,points:0 }
 
-    const newA = { ...rowA, played: rowA.played+1, goals_for: rowA.goals_for+scoreA, goals_against: rowA.goals_against+scoreB }
-    const newB = { ...rowB, played: rowB.played+1, goals_for: rowB.goals_for+scoreB, goals_against: rowB.goals_against+scoreA }
+    const newA = { played: rowA.played+1, goals_for: rowA.goals_for+scoreA, goals_against: rowA.goals_against+scoreB,
+                   won: rowA.won, drawn: rowA.drawn, lost: rowA.lost, points: rowA.points }
+    const newB = { played: rowB.played+1, goals_for: rowB.goals_for+scoreB, goals_against: rowB.goals_against+scoreA,
+                   won: rowB.won, drawn: rowB.drawn, lost: rowB.lost, points: rowB.points }
 
     if (result === 'teamA') { newA.won++; newA.points+=3; newB.lost++ }
     else if (result === 'teamB') { newB.won++; newB.points+=3; newA.lost++ }
     else { newA.drawn++; newA.points++; newB.drawn++; newB.points++ }
 
-    await supabase.from('group_standings').upsert([
+    // Explicitly list only writable columns — never include generated columns like goal_diff
+    const { error: uErr } = await supabase.from('group_standings').upsert([
       { group_name:g, team:tA, ...newA, updated_at: new Date().toISOString() },
       { group_name:g, team:tB, ...newB, updated_at: new Date().toISOString() },
     ], { onConflict: 'group_name,team' })
+    return uErr ? uErr.message : null
   }
 
   async function resolveKnockoutProgression(completedMatch, result) {
