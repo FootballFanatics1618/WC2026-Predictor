@@ -239,8 +239,16 @@ body {
 .btn-sm { padding: 0.4rem 0.9rem; font-size: 0.85rem; }
 
 /* League Table */
-.table-wrap { overflow-x: auto; }
-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+.table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  cursor: grab;
+  border-radius: 0.5rem;
+}
+.table-wrap:active { cursor: grabbing; }
+.table-wrap::-webkit-scrollbar { display: none; }
+table { width: 100%; border-collapse: collapse; font-size: 0.9rem; min-width: 560px; }
 th {
   text-align: left;
   padding: 0.6rem 0.75rem;
@@ -250,7 +258,13 @@ th {
   letter-spacing: 0.08em;
   color: var(--gray-500);
   border-bottom: 1px solid rgba(255,255,255,0.08);
+  position: sticky;
+  top: 0;
+  background: var(--gray-900);
+  z-index: 1;
 }
+th:first-child, td:first-child { position: sticky; left: 0; z-index: 2; }
+th:first-child { z-index: 3; }
 td {
   padding: 0.75rem;
   border-bottom: 1px solid rgba(255,255,255,0.05);
@@ -438,5 +452,21 @@ tr:hover td { background: rgba(255,255,255,0.03); }
   .nav-btn-icon {
     font-size: 1.1rem;
     padding: 0.35rem;
+  }
+
+  .scroll-hint {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    font-size: 0.7rem;
+    color: var(--gray-600);
+    margin-top: 0.5rem;
+    animation: fadeHint 3s ease-in-out infinite;
+  }
+
+  @keyframes fadeHint {
+    0%, 100% { opacity: 0.5; }
+    50% { opacity: 1; }
   }
 }

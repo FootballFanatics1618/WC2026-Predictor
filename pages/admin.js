@@ -54,6 +54,7 @@ export default function Admin() {
   const [gbPick, setGbPick]         = useState('')
   const [gbOpen, setGbOpen]         = useState(false)
   const [gbSaving, setGbSaving]     = useState(false)
+  const [gbAwardedName, setGbAwardedName] = useState(null)
   const [message, setMessage]       = useState('')
   const [activeStage, setActiveStage] = useState('Group Stage')
   const [selectedDay, setSelectedDay] = useState(null)
@@ -80,8 +81,17 @@ export default function Admin() {
     setUser(session.user)
     if (!ADMIN_EMAILS.includes(session.user.email)) { setLoading(false); return }
     setIsAdmin(true)
-    await Promise.all([loadMatches(), loadStandings(), loadSyncLog()])
+    await Promise.all([loadMatches(), loadStandings(), loadSyncLog(), loadGbStatus()])
     setLoading(false)
+  }
+
+  async function loadGbStatus() {
+    const { data } = await supabase.from('profiles').select('golden_boot_pick').eq('golden_boot_correct', true).limit(1).maybeSingle()
+    if (data?.golden_boot_pick) {
+      setGbAwardedName(data.golden_boot_pick)
+      setGbPick(data.golden_boot_pick)
+      setGbSearch(data.golden_boot_pick)
+    }
   }
 
   async function loadMatches() {
@@ -436,16 +446,22 @@ export default function Admin() {
   async function awardGoldenBoot() {
     if (!gbPick.trim()) { alert('Search and select a player first.'); return }
     setGbSaving(true)
-    const { data: winners } = await supabase.from('profiles').select('id').eq('golden_boot_pick', gbPick.trim())
-    for (const w of (winners || [])) {
-      await supabase.from('predictions').upsert({
-        user_id: w.id, match_id: 9999,
-        predicted_result: 'teamA', predicted_score_a: 0, predicted_score_b: 0,
-        is_result_correct: true, is_score_correct: false, points_earned: 10,
-      }, { onConflict: 'user_id,match_id' })
-      await supabase.from('profiles').update({ golden_boot_correct: true }).eq('id', w.id)
-    }
-    setMessage(`🥇 Golden Boot: ${gbPick}! ${winners?.length || 0} players get +10 pts.`)
+    const { data: count, error } = await supabase.rpc('award_golden_boot', { p_player: gbPick.trim() })
+    if (error) { alert(`❌ Award failed: ${error.message}`); setGbSaving(false); return }
+    setGbAwardedName(gbPick.trim())
+    setMessage(`🥇 Golden Boot: ${gbPick}! ${count || 0} players get +10 pts.`)
+    setGbSaving(false)
+  }
+
+  async function resetGoldenBoot() {
+    if (!confirm('Reset Golden Boot award? All users will lose their +10 bonus.')) return
+    setGbSaving(true)
+    const { error } = await supabase.rpc('reset_golden_boot')
+    if (error) { alert(`❌ Reset failed: ${error.message}`); setGbSaving(false); return }
+    setGbAwardedName(null)
+    setGbPick('')
+    setGbSearch('')
+    setMessage('🔄 Golden Boot award has been reset.')
     setGbSaving(false)
   }
 
@@ -606,73 +622,90 @@ export default function Admin() {
           <div className="card-gold">
             <h2 style={{fontFamily:'var(--font-display)',fontSize:'1.3rem',color:'var(--gold)',marginBottom:'0.5rem'}}>🥇 AWARD GOLDEN BOOT</h2>
             <p style={{fontSize:'0.82rem',color:'var(--gray-500)',marginBottom:'0.9rem'}}>End of tournament only. Users who picked this player get +10 pts.</p>
-            <div style={{display:'flex',flexDirection:'column',gap:'0.75rem'}}>
-              <div style={{position:'relative'}}>
-                <label className="form-label">Search Golden Boot Winner</label>
-                <div style={{position:'relative'}}>
-                  <input
-                    className="form-input"
-                    placeholder="Type player name to search..."
-                    value={gbSearch}
-                    onChange={e => { setGbSearch(e.target.value); setGbPick(''); setGbOpen(true) }}
-                    onFocus={() => setGbOpen(true)}
-                    onBlur={() => setTimeout(() => setGbOpen(false), 200)}
-                    style={{paddingRight: gbPick ? '2.2rem' : '0.9rem'}}
-                  />
-                  {gbPick && <span style={{position:'absolute',right:'0.7rem',top:'50%',transform:'translateY(-50%)',color:'#68d391',fontSize:'1rem'}}>✓</span>}
+
+            {gbAwardedName ? (
+              <div style={{display:'flex',alignItems:'center',gap:'0.75rem',flexWrap:'wrap'}}>
+                <div style={{fontSize:'0.95rem',color:'var(--white)'}}>
+                  Awarded to: <strong style={{color:'var(--gold)'}}>{gbAwardedName}</strong>
                 </div>
-                {gbPick && (
-                  <div style={{fontSize:'0.78rem',color:'#68d391',marginTop:'0.3rem'}}>Selected: <strong>{gbPick}</strong></div>
-                )}
-                {/* Dropdown portal — z-index 500 ensures it floats above everything */}
-                {gbOpen && (() => {
-                  const players = [...ALL_PLAYERS].sort().filter(p => !gbSearch || p.toLowerCase().includes(gbSearch.toLowerCase()))
-                  return players.length > 0 ? (
-                    <div style={{
-                      position:'absolute',top:'calc(100% + 4px)',left:0,right:0,
-                      background:'var(--gray-900)',border:'1px solid rgba(245,200,66,0.35)',
-                      borderRadius:'var(--radius)',maxHeight:'260px',overflowY:'auto',
-                      zIndex:500,boxShadow:'0 12px 40px rgba(0,0,0,0.7)'
-                    }}>
-                      {players.slice(0,80).map(p => (
-                        <div
-                          key={p}
-                          onMouseDown={e => { e.preventDefault(); setGbPick(p); setGbSearch(p); setGbOpen(false) }}
-                          style={{
-                            padding:'0.5rem 0.9rem',cursor:'pointer',fontSize:'0.875rem',
-                            color: gbPick===p ? 'var(--gold)' : 'var(--white)',
-                            background: gbPick===p ? 'rgba(245,200,66,0.1)' : 'transparent',
-                            borderBottom:'1px solid rgba(255,255,255,0.04)',
-                            display:'flex',justifyContent:'space-between',
-                          }}
-                          onMouseEnter={e => e.currentTarget.style.background='rgba(255,255,255,0.07)'}
-                          onMouseLeave={e => e.currentTarget.style.background = gbPick===p ? 'rgba(245,200,66,0.1)' : 'transparent'}
-                        >
-                          {p} {gbPick===p && <span style={{color:'var(--gold)'}}>✓</span>}
-                        </div>
-                      ))}
-                      {players.length > 80 && (
-                        <div style={{padding:'0.4rem 0.9rem',fontSize:'0.78rem',color:'var(--gray-500)',textAlign:'center'}}>
-                          Type more to narrow… ({players.length} results)
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <div style={{position:'absolute',top:'calc(100% + 4px)',left:0,right:0,background:'var(--gray-900)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:'var(--radius)',padding:'0.6rem 0.9rem',fontSize:'0.85rem',color:'var(--gray-500)',zIndex:500}}>
-                      No players found for "{gbSearch}"
-                    </div>
-                  )
-                })()}
+                <button
+                  className="btn btn-ghost btn-sm"
+                  disabled={gbSaving}
+                  onClick={resetGoldenBoot}
+                  style={{fontSize:'0.78rem',padding:'0.3rem 0.7rem',color:'var(--danger,#e74c3c)'}}
+                >
+                  {gbSaving ? '...' : '🔄 Reset'}
+                </button>
               </div>
-              <button
-                className="btn btn-primary"
-                onClick={awardGoldenBoot}
-                disabled={gbSaving || !gbPick}
-                style={{alignSelf:'flex-start'}}
-              >
-                {gbSaving ? 'Awarding…' : '🥇 Award +10 pts'}
-              </button>
-            </div>
+            ) : (
+              <div style={{display:'flex',flexDirection:'column',gap:'0.75rem'}}>
+                <div style={{position:'relative'}}>
+                  <label className="form-label">Search Golden Boot Winner</label>
+                  <div style={{position:'relative'}}>
+                    <input
+                      className="form-input"
+                      placeholder="Type player name to search..."
+                      value={gbSearch}
+                      onChange={e => { setGbSearch(e.target.value); setGbPick(''); setGbOpen(true) }}
+                      onFocus={() => setGbOpen(true)}
+                      onBlur={() => setTimeout(() => setGbOpen(false), 200)}
+                      style={{paddingRight: gbPick ? '2.2rem' : '0.9rem'}}
+                    />
+                    {gbPick && <span style={{position:'absolute',right:'0.7rem',top:'50%',transform:'translateY(-50%)',color:'#68d391',fontSize:'1rem'}}>✓</span>}
+                  </div>
+                  {gbPick && (
+                    <div style={{fontSize:'0.78rem',color:'#68d391',marginTop:'0.3rem'}}>Selected: <strong>{gbPick}</strong></div>
+                  )}
+                  {/* Dropdown portal — z-index 500 ensures it floats above everything */}
+                  {gbOpen && (() => {
+                    const players = [...ALL_PLAYERS].sort().filter(p => !gbSearch || p.toLowerCase().includes(gbSearch.toLowerCase()))
+                    return players.length > 0 ? (
+                      <div style={{
+                        position:'absolute',top:'calc(100% + 4px)',left:0,right:0,
+                        background:'var(--gray-900)',border:'1px solid rgba(245,200,66,0.35)',
+                        borderRadius:'var(--radius)',maxHeight:'260px',overflowY:'auto',
+                        zIndex:500,boxShadow:'0 12px 40px rgba(0,0,0,0.7)'
+                      }}>
+                        {players.slice(0,80).map(p => (
+                          <div
+                            key={p}
+                            onMouseDown={e => { e.preventDefault(); setGbPick(p); setGbSearch(p); setGbOpen(false) }}
+                            style={{
+                              padding:'0.5rem 0.9rem',cursor:'pointer',fontSize:'0.875rem',
+                              color: gbPick===p ? 'var(--gold)' : 'var(--white)',
+                              background: gbPick===p ? 'rgba(245,200,66,0.1)' : 'transparent',
+                              borderBottom:'1px solid rgba(255,255,255,0.04)',
+                              display:'flex',justifyContent:'space-between',
+                            }}
+                            onMouseEnter={e => e.currentTarget.style.background='rgba(255,255,255,0.07)'}
+                            onMouseLeave={e => e.currentTarget.style.background = gbPick===p ? 'rgba(245,200,66,0.1)' : 'transparent'}
+                          >
+                            {p} {gbPick===p && <span style={{color:'var(--gold)'}}>✓</span>}
+                          </div>
+                        ))}
+                        {players.length > 80 && (
+                          <div style={{padding:'0.4rem 0.9rem',fontSize:'0.78rem',color:'var(--gray-500)',textAlign:'center'}}>
+                            Type more to narrow… ({players.length} results)
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div style={{position:'absolute',top:'calc(100% + 4px)',left:0,right:0,background:'var(--gray-900)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:'var(--radius)',padding:'0.6rem 0.9rem',fontSize:'0.85rem',color:'var(--gray-500)',zIndex:500}}>
+                        No players found for "{gbSearch}"
+                      </div>
+                    )
+                  })()}
+                </div>
+                <button
+                  className="btn btn-primary"
+                  onClick={awardGoldenBoot}
+                  disabled={gbSaving || !gbPick}
+                  style={{alignSelf:'flex-start'}}
+                >
+                  {gbSaving ? 'Awarding…' : '🥇 Award +10 pts'}
+                </button>
+              </div>
+            )}
           </div>
         )}
 
