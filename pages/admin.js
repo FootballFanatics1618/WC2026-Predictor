@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef, useLayoutEffect } from 'react'
 import { useRouter } from 'next/router'
 import Navbar from '../components/Navbar'
 import GoldenBootPicker from '../components/GoldenBootPicker'
@@ -70,6 +70,19 @@ export default function Admin() {
 
   const dayPillRef = useRef(null)
   const dayScrollRef = useDragScroll()
+  const scrollRestoreRef = useRef(null)
+
+  function preserveScroll() {
+    scrollRestoreRef.current = window.scrollY
+  }
+
+  useEffect(() => {
+    if (scrollRestoreRef.current !== null) {
+      const y = scrollRestoreRef.current
+      scrollRestoreRef.current = null
+      requestAnimationFrame(() => window.scrollTo({ top: y, behavior: 'instant' }))
+    }
+  })
 
   useEffect(() => { dayPillRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' }) }, [selectedDay])
 
@@ -519,13 +532,13 @@ export default function Admin() {
 
         {/* Top-level tabs */}
         <div className="tabs" style={{marginBottom:'1.5rem'}}>
-          <button className={`tab-btn ${activeTab==='results'?'active':''}`} onClick={() => setActiveTab('results')}>
+          <button className={`tab-btn ${activeTab==='results'?'active':''}`} onClick={() => { preserveScroll(); setActiveTab('results') }}>
             Match Results
           </button>
-          <button className={`tab-btn ${activeTab==='sync'?'active':''}`} onClick={() => { setActiveTab('sync'); loadSyncLog() }}>
+          <button className={`tab-btn ${activeTab==='sync'?'active':''}`} onClick={() => { preserveScroll(); setActiveTab('sync'); loadSyncLog() }}>
             Auto-Sync
           </button>
-          <button className={`tab-btn ${activeTab==='gb'?'active':''}`} onClick={() => setActiveTab('gb')}>
+          <button className={`tab-btn ${activeTab==='gb'?'active':''}`} onClick={() => { preserveScroll(); setActiveTab('gb') }}>
             Golden Boot
           </button>
         </div>
@@ -717,6 +730,7 @@ export default function Admin() {
               <select
                 className="form-select"
                 value={activeStage}
+                onMouseDown={preserveScroll}
                 onChange={(e)=>{ setActiveStage(e.target.value); setSelectedDay(null); setShowCompleted(false) }}
                 style={{fontSize:'0.85rem'}}
               >
@@ -739,7 +753,7 @@ export default function Admin() {
                       <button
                         key={dateStr}
                         ref={isActive ? dayPillRef : null}
-                        onClick={()=>{ setSelectedDay(dateStr); setShowCompleted(false) }}
+                        onClick={()=>{ preserveScroll(); setSelectedDay(dateStr); setShowCompleted(false) }}
                         style={{
                           padding:'0.4rem 0.85rem',
                           borderRadius:'99px',
@@ -826,6 +840,7 @@ export default function Admin() {
                           className="form-select"
                           style={{flex:'1 1 160px',minWidth:'140px'}}
                           value={form.result||''}
+                          onMouseDown={preserveScroll}
                           onChange={e=>handleResultInput(match.id,'result',e.target.value)}
                         >
                           <option value="">— Result —</option>
@@ -873,7 +888,7 @@ export default function Admin() {
             {completedOnDay.length > 0 && (
               <div style={{marginBottom:'2rem'}}>
                 <button
-                  onClick={()=>setShowCompleted(s=>!s)}
+                  onClick={()=>{ preserveScroll(); setShowCompleted(s=>!s) }}
                   style={{
                     display:'flex',alignItems:'center',gap:'0.5rem',
                     background:'none',border:'none',cursor:'pointer',
@@ -965,6 +980,7 @@ export default function Admin() {
                                 className="form-select"
                                 style={{flex:'1 1 160px',minWidth:'140px'}}
                                 value={eform.result||''}
+                                onMouseDown={preserveScroll}
                                 onChange={e=>handleResultInput(m.id,'result',e.target.value)}
                               >
                                 <option value="">— Result —</option>
@@ -1017,7 +1033,7 @@ export default function Admin() {
               <>
                 <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'1rem',flexWrap:'wrap',gap:'0.5rem'}}>
                   <h2 style={{fontFamily:'var(--font-display)',fontSize:'1.2rem',color:'var(--white)'}}>GROUP STANDINGS</h2>
-                  <button className="btn btn-ghost btn-sm" onClick={()=>setShowStandings(s=>!s)}>
+                  <button className="btn btn-ghost btn-sm" onClick={()=>{ preserveScroll(); setShowStandings(s=>!s) }}>
                     {showStandings ? 'Hide' : 'Show'} Standings
                   </button>
                 </div>

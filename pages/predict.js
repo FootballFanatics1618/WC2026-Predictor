@@ -10,6 +10,147 @@ import { isMatchPredictionLocked, timeUntilLock } from '../lib/locktime'
 import { useDragScroll } from '../hooks/useDragScroll'
 import { format, parseISO, isToday, isBefore, startOfDay } from 'date-fns'
 
+function isMatchCompleted(match) { return match.result !== null }
+
+function isPredLocked(match) {
+  if (isMatchCompleted(match)) return true
+  return isMatchPredictionLocked(match.match_date, match.match_time, match.kickoff_utc)
+}
+
+function getResultLabel(result, teamA, teamB) {
+  if (result === 'teamA') return `${teamA} Win`
+  if (result === 'teamB') return `${teamB} Win`
+  if (result === 'draw') return 'Draw'
+  return ''
+}
+
+function MatchCard({ match, saved, localPred, isEditing, isSaving, onResultChange, onScorelineChange, onSave, onEdit }) {
+  const completed = isMatchCompleted(match)
+  const predLocked = isPredLocked(match)
+  const pred = localPred || (saved ? { result: saved.predicted_result, scoreA: saved.predicted_score_a, scoreB: saved.predicted_score_b } : null)
+  const scorelines = pred?.result ? generateScorelines(pred.result) : []
+  const currentScoreline = pred?.scoreA !== undefined && pred?.scoreB !== undefined ? `${pred.scoreA}-${pred.scoreB}` : ''
+  const isCorrectResult = completed && saved && saved.is_result_correct
+  const isCorrectScore = completed && saved && saved.is_score_correct
+  const lockCountdown = !predLocked ? timeUntilLock(match.match_date, match.match_time, match.kickoff_utc) : null
+  const hasPrediction = !!saved
+  const isLocked = predLocked || completed
+  const dropdownsDisabled = isLocked || (hasPrediction && !isEditing)
+
+  return (
+    <div className={`match-card ${completed ? 'completed' : ''} ${hasPrediction && !completed ? 'predicted' : ''}`}
+      style={{ width: '100%', boxSizing: 'border-box' }}>
+
+      {/* Top bar: stage/time + status */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.6rem', flexWrap: 'wrap', gap: '0.4rem' }}>
+        <div>
+          <span style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--gray-500)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            {match.stage}{match.group_name ? ` · Group ${match.group_name}` : ''}
+          </span>
+          <div style={{ fontSize: '0.78rem', color: 'var(--gray-500)', marginTop: '0.1rem', lineHeight: 1.4 }}>
+            {format(parseISO(match.match_date), 'EEE, MMM d')} · {toIST(match.match_time)}
+          </div>
+          <div style={{ fontSize: '0.72rem', color: 'var(--gray-500)' }}>{match.venue}</div>
+        </div>
+        <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          {hasPrediction && !completed && (
+            <span style={{ fontSize: '1rem', color: 'var(--success)', lineHeight: 1 }} title="Prediction saved">✅</span>
+          )}
+          {completed && (
+            <>
+              {isCorrectScore && <span className="points-chip points-5">+5 ⚡</span>}
+              {isCorrectResult && !isCorrectScore && <span className="points-chip points-3">+3 ✓</span>}
+              {!isCorrectResult && saved && <span className="points-chip points-0">0</span>}
+            </>
+          )}
+          {predLocked && !completed && <span className="lock-chip">🔒 Locked</span>}
+          {lockCountdown && <span style={{ fontSize: '0.72rem', color: '#f6ad55', background: 'rgba(246,173,85,0.12)', padding: '2px 7px', borderRadius: '99px' }}>{lockCountdown}</span>}
+        </div>
+      </div>
+
+      {/* Teams — large, centered */}
+      <div className="match-teams">
+        <span style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, justifyContent: 'flex-end' }}>
+          <span style={{ textAlign: 'right' }}>{match.team_a}</span>
+          <FlagImg team={match.team_a} size={26} />
+        </span>
+        <span className="match-vs" style={{ flexShrink: 0 }}>vs</span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, justifyContent: 'flex-start' }}>
+          <FlagImg team={match.team_b} size={26} />
+          <span>{match.team_b}</span>
+        </span>
+      </div>
+
+      {/* Completed result */}
+      {completed && (
+        <div style={{ textAlign: 'center', marginBottom: '0.6rem' }}>
+          <span className="match-result-badge" style={{ fontSize: '1rem', padding: '0.3rem 1rem' }}>
+            FT {match.score_a} – {match.score_b}
+          </span>
+          {saved && (
+            <div style={{ marginTop: '0.4rem', fontSize: '0.82rem', color: 'var(--gray-500)' }}>
+              Your pick: {getResultLabel(saved.predicted_result, match.team_a, match.team_b)} {saved.predicted_score_a}–{saved.predicted_score_b}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Prediction inputs — stacked on mobile */}
+      {!isLocked && (
+        <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'flex-end', flexWrap: 'wrap', marginTop: '0.5rem' }}>
+          <div style={{ flex: '1 1 140px', minWidth: 0 }}>
+            <label className="form-label">Result</label>
+            <select className="form-select" value={pred?.result || ''} onChange={e => onResultChange(match.id, e.target.value)} disabled={dropdownsDisabled}>
+              <option value="">— Pick result —</option>
+              <option value="teamA">{match.team_a} Win</option>
+              {match.stage === 'Group Stage' && <option value="draw">Draw</option>}
+              <option value="teamB">{match.team_b} Win</option>
+            </select>
+          </div>
+          <div style={{ flex: '1 1 110px', minWidth: 0 }}>
+            <label className="form-label">Scoreline</label>
+            <select className="form-select" value={currentScoreline} onChange={e => onScorelineChange(match.id, e.target.value)} disabled={dropdownsDisabled || !pred?.result}>
+              <option value="">— Score —</option>
+              {scorelines.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+          {hasPrediction && !isEditing ? (
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => onEdit(match.id, saved)}
+              style={{ whiteSpace: 'nowrap', flexShrink: 0, marginBottom: '2px', borderColor: 'rgba(245,200,66,0.45)', color: 'var(--gold)' }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+              Edit
+            </button>
+          ) : (
+            <button
+              className="btn btn-primary btn-sm"
+              onClick={onSave}
+              disabled={isSaving}
+              style={{ whiteSpace: 'nowrap', flexShrink: 0, marginBottom: '2px' }}
+            >
+              {isSaving ? '...' : 'Save'}
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Locked with a saved prediction */}
+      {predLocked && !completed && saved && (
+        <div style={{ fontSize: '0.85rem', color: 'var(--gray-500)', marginTop: '0.4rem' }}>
+          Your pick: <strong style={{ color: 'var(--white)' }}>
+            {getResultLabel(saved.predicted_result, match.team_a, match.team_b)} — {saved.predicted_score_a}–{saved.predicted_score_b}
+          </strong>
+        </div>
+      )}
+      {predLocked && !completed && !saved && (
+        <div style={{ fontSize: '0.85rem', color: 'var(--danger)', marginTop: '0.4rem' }}>❌ No prediction — window closed</div>
+      )}
+    </div>
+  )
+}
+
 export default function Predict() {
   const router = useRouter()
   const [user, setUser] = useState(null)
@@ -121,13 +262,6 @@ export default function Predict() {
     return isBefore(startOfDay(parseISO(match.match_date)), startOfDay(new Date()))
   }
   function isMatchToday(match) { return isToday(parseISO(match.match_date)) }
-  function isMatchCompleted(match) { return match.result !== null }
-
-  // Prediction lock: 1 hour before kick-off OR if result already entered
-  function isPredLocked(match) {
-    if (isMatchCompleted(match)) return true
-    return isMatchPredictionLocked(match.match_date, match.match_time, match.kickoff_utc)
-  }
 
   // Tabs:
   // Today: matches today
@@ -160,6 +294,13 @@ export default function Predict() {
   function handleScorelineChange(matchId, scoreline) {
     const [a, b] = scoreline.split('-').map(Number)
     setPredictions(prev => ({ ...prev, [matchId]: { ...prev[matchId], scoreA: a, scoreB: b } }))
+  }
+
+  function handleEdit(matchId, saved) {
+    setEditing(prev => ({ ...prev, [matchId]: true }))
+    if (saved && !predictions[matchId]) {
+      setPredictions(prev => ({ ...prev, [matchId]: { result: saved.predicted_result, scoreA: saved.predicted_score_a, scoreB: saved.predicted_score_b } }))
+    }
   }
 
   async function savePrediction(match) {
@@ -198,148 +339,6 @@ export default function Predict() {
       setPredictions(prev => { const next = { ...prev }; delete next[match.id]; return next })
     }
     setSaving(s => ({ ...s, [match.id]: false }))
-  }
-
-  function getResultLabel(result, teamA, teamB) {
-    if (result === 'teamA') return `${teamA} Win`
-    if (result === 'teamB') return `${teamB} Win`
-    if (result === 'draw') return 'Draw'
-    return ''
-  }
-
-  function MatchCard({ match }) {
-    const completed = isMatchCompleted(match)
-    const predLocked = isPredLocked(match)
-    const saved = savedPredictions[match.id]
-    const local = predictions[match.id]
-    const pred = local || (saved ? { result: saved.predicted_result, scoreA: saved.predicted_score_a, scoreB: saved.predicted_score_b } : null)
-    const scorelines = pred?.result ? generateScorelines(pred.result) : []
-    const currentScoreline = pred?.scoreA !== undefined && pred?.scoreB !== undefined ? `${pred.scoreA}-${pred.scoreB}` : ''
-    const isCorrectResult = completed && saved && saved.is_result_correct
-    const isCorrectScore = completed && saved && saved.is_score_correct
-    const lockCountdown = !predLocked ? timeUntilLock(match.match_date, match.match_time, match.kickoff_utc) : null
-    const hasPrediction = !!saved
-    const isEditing = !!editing[match.id]
-    const isLocked = predLocked || completed
-    const dropdownsDisabled = isLocked || (hasPrediction && !isEditing)
-
-    return (
-      <div className={`match-card ${completed ? 'completed' : ''} ${hasPrediction && !completed ? 'predicted' : ''}`}
-        style={{ width: '100%', boxSizing: 'border-box' }}>
-
-        {/* Top bar: stage/time + status */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.6rem', flexWrap: 'wrap', gap: '0.4rem' }}>
-          <div>
-            <span style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--gray-500)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-              {match.stage}{match.group_name ? ` · Group ${match.group_name}` : ''}
-            </span>
-            <div style={{ fontSize: '0.78rem', color: 'var(--gray-500)', marginTop: '0.1rem', lineHeight: 1.4 }}>
-              {format(parseISO(match.match_date), 'EEE, MMM d')} · {toIST(match.match_time)}
-            </div>
-            <div style={{ fontSize: '0.72rem', color: 'var(--gray-500)' }}>{match.venue}</div>
-          </div>
-          <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-            {hasPrediction && !completed && (
-              <span style={{ fontSize: '1rem', color: 'var(--success)', lineHeight: 1 }} title="Prediction saved">✅</span>
-            )}
-            {completed && (
-              <>
-                {isCorrectScore && <span className="points-chip points-5">+5 ⚡</span>}
-                {isCorrectResult && !isCorrectScore && <span className="points-chip points-3">+3 ✓</span>}
-                {!isCorrectResult && saved && <span className="points-chip points-0">0</span>}
-              </>
-            )}
-            {predLocked && !completed && <span className="lock-chip">🔒 Locked</span>}
-            {lockCountdown && <span style={{ fontSize: '0.72rem', color: '#f6ad55', background: 'rgba(246,173,85,0.12)', padding: '2px 7px', borderRadius: '99px' }}>{lockCountdown}</span>}
-          </div>
-        </div>
-
-        {/* Teams — large, centered */}
-        <div className="match-teams">
-          <span style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, justifyContent: 'flex-end' }}>
-            <span style={{ textAlign: 'right' }}>{match.team_a}</span>
-            <FlagImg team={match.team_a} size={26} />
-          </span>
-          <span className="match-vs" style={{ flexShrink: 0 }}>vs</span>
-          <span style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, justifyContent: 'flex-start' }}>
-            <FlagImg team={match.team_b} size={26} />
-            <span>{match.team_b}</span>
-          </span>
-        </div>
-
-        {/* Completed result */}
-        {completed && (
-          <div style={{ textAlign: 'center', marginBottom: '0.6rem' }}>
-            <span className="match-result-badge" style={{ fontSize: '1rem', padding: '0.3rem 1rem' }}>
-              FT {match.score_a} – {match.score_b}
-            </span>
-            {saved && (
-              <div style={{ marginTop: '0.4rem', fontSize: '0.82rem', color: 'var(--gray-500)' }}>
-                Your pick: {getResultLabel(saved.predicted_result, match.team_a, match.team_b)} {saved.predicted_score_a}–{saved.predicted_score_b}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Prediction inputs — stacked on mobile */}
-        {!isLocked && (
-          <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'flex-end', flexWrap: 'wrap', marginTop: '0.5rem' }}>
-            <div style={{ flex: '1 1 140px', minWidth: 0 }}>
-              <label className="form-label">Result</label>
-              <select className="form-select" value={pred?.result || ''} onChange={e => handleResultChange(match.id, e.target.value)} disabled={dropdownsDisabled}>
-                <option value="">— Pick result —</option>
-                <option value="teamA">{match.team_a} Win</option>
-                {match.stage === 'Group Stage' && <option value="draw">Draw</option>}
-                <option value="teamB">{match.team_b} Win</option>
-              </select>
-            </div>
-            <div style={{ flex: '1 1 110px', minWidth: 0 }}>
-              <label className="form-label">Scoreline</label>
-              <select className="form-select" value={currentScoreline} onChange={e => handleScorelineChange(match.id, e.target.value)} disabled={dropdownsDisabled || !pred?.result}>
-                <option value="">— Score —</option>
-                {scorelines.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </div>
-            {hasPrediction && !isEditing ? (
-              <button
-                className="btn btn-ghost btn-sm"
-                onClick={() => {
-                  setEditing(prev => ({ ...prev, [match.id]: true }))
-                  if (saved && !predictions[match.id]) {
-                    setPredictions(prev => ({ ...prev, [match.id]: { result: saved.predicted_result, scoreA: saved.predicted_score_a, scoreB: saved.predicted_score_b } }))
-                  }
-                }}
-                style={{ whiteSpace: 'nowrap', flexShrink: 0, marginBottom: '2px', borderColor: 'rgba(245,200,66,0.45)', color: 'var(--gold)' }}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
-                Edit
-              </button>
-            ) : (
-              <button
-                className="btn btn-primary btn-sm"
-                onClick={() => savePrediction(match)}
-                disabled={saving[match.id]}
-                style={{ whiteSpace: 'nowrap', flexShrink: 0, marginBottom: '2px' }}
-              >
-                {saving[match.id] ? '...' : 'Save'}
-              </button>
-            )}
-          </div>
-        )}
-
-        {/* Locked with a saved prediction */}
-        {predLocked && !completed && saved && (
-          <div style={{ fontSize: '0.85rem', color: 'var(--gray-500)', marginTop: '0.4rem' }}>
-            Your pick: <strong style={{ color: 'var(--white)' }}>
-              {getResultLabel(saved.predicted_result, match.team_a, match.team_b)} — {saved.predicted_score_a}–{saved.predicted_score_b}
-            </strong>
-          </div>
-        )}
-        {predLocked && !completed && !saved && (
-          <div style={{ fontSize: '0.85rem', color: 'var(--danger)', marginTop: '0.4rem' }}>❌ No prediction — window closed</div>
-        )}
-      </div>
-    )
   }
 
   // Check if all matches on a date have predictions
@@ -401,13 +400,13 @@ export default function Predict() {
         <h1 className="section-title" style={{ maxWidth: '700px', margin: '0 auto 1rem' }}>MATCH PREDICTIONS</h1>
 
         <div className="tabs" style={{ maxWidth: '700px', margin: '0 auto 1.5rem' }}>
-          <button className={`tab-btn ${tab === 'upcoming' ? 'active' : ''}`} onClick={() => setTab('upcoming')}>
+          <button className={`tab-btn ${tab === 'upcoming' ? 'active' : ''}`} onClick={() => { const y = window.scrollY; setTab('upcoming'); requestAnimationFrame(() => window.scrollTo(0, y)) }}>
             Upcoming {upcomingMatches.length > 0 && `(${upcomingMatches.length})`}
           </button>
-          <button className={`tab-btn ${tab === 'today' ? 'active' : ''}`} onClick={() => setTab('today')}>
+          <button className={`tab-btn ${tab === 'today' ? 'active' : ''}`} onClick={() => { const y = window.scrollY; setTab('today'); requestAnimationFrame(() => window.scrollTo(0, y)) }}>
             Today {todayMatches.length > 0 && (todayDone ? '✅' : `(${todayMatches.length})`)}
           </button>
-          <button className={`tab-btn ${tab === 'completed' ? 'active' : ''}`} onClick={() => setTab('completed')}>
+          <button className={`tab-btn ${tab === 'completed' ? 'active' : ''}`} onClick={() => { const y = window.scrollY; setTab('completed'); requestAnimationFrame(() => window.scrollTo(0, y)) }}>
             Completed {completedMatches.length > 0 && `(${completedMatches.length})`}
           </button>
         </div>
@@ -417,7 +416,19 @@ export default function Predict() {
           todayMatches.length === 0
             ? <div className="card" style={{ maxWidth: '700px', margin: '0 auto', textAlign: 'center', padding: '3rem', color: 'var(--gray-500)' }}>No matches today. Check upcoming!</div>
             : <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxWidth: '700px', margin: '0 auto' }}>
-                {todayMatches.map(m => <MatchCard key={m.id} match={m} />)}
+                {todayMatches.map(m => (
+                  <MatchCard
+                    key={m.id} match={m}
+                    saved={savedPredictions[m.id]}
+                    localPred={predictions[m.id]}
+                    isEditing={!!editing[m.id]}
+                    isSaving={!!saving[m.id]}
+                    onResultChange={handleResultChange}
+                    onScorelineChange={handleScorelineChange}
+                    onSave={() => savePrediction(m)}
+                    onEdit={handleEdit}
+                  />
+                ))}
               </div>
         )}
 
@@ -468,7 +479,19 @@ export default function Predict() {
                     <div style={{ fontSize: '0.82rem', color: 'var(--gray-500)' }}>
                       {format(parseISO(selectedUpcomingDate), 'EEEE, MMMM d yyyy')} · {upcomingByDate[selectedUpcomingDate].length} matches
                     </div>
-                    {upcomingByDate[selectedUpcomingDate].map(m => <MatchCard key={m.id} match={m} />)}
+                    {upcomingByDate[selectedUpcomingDate].map(m => (
+                      <MatchCard
+                        key={m.id} match={m}
+                        saved={savedPredictions[m.id]}
+                        localPred={predictions[m.id]}
+                        isEditing={!!editing[m.id]}
+                        isSaving={!!saving[m.id]}
+                        onResultChange={handleResultChange}
+                        onScorelineChange={handleScorelineChange}
+                        onSave={() => savePrediction(m)}
+                        onEdit={handleEdit}
+                      />
+                    ))}
                   </div>
                 )}
               </>
@@ -479,7 +502,19 @@ export default function Predict() {
           completedMatches.length === 0
             ? <div className="card" style={{ maxWidth: '700px', margin: '0 auto', textAlign: 'center', padding: '3rem', color: 'var(--gray-500)' }}>No completed matches yet.</div>
             : <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxWidth: '700px', margin: '0 auto' }}>
-                {[...completedMatches].reverse().map(m => <MatchCard key={m.id} match={m} />)}
+                {[...completedMatches].reverse().map(m => (
+                  <MatchCard
+                    key={m.id} match={m}
+                    saved={savedPredictions[m.id]}
+                    localPred={predictions[m.id]}
+                    isEditing={!!editing[m.id]}
+                    isSaving={!!saving[m.id]}
+                    onResultChange={handleResultChange}
+                    onScorelineChange={handleScorelineChange}
+                    onSave={() => savePrediction(m)}
+                    onEdit={handleEdit}
+                  />
+                ))}
               </div>
         )}
       </div>

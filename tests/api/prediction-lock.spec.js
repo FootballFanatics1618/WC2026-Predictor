@@ -48,15 +48,12 @@ describe('Section 1 — Prediction Lock (API)', () => {
     expect(pred.predicted_result).toBe('teamA')
   })
 
-  test('1.3 — Match within lock window cannot accept predictions via UI', async () => {
+  test('1.3 — DB rejects prediction after lock time', async () => {
     await lockMatch(TEST_MATCH_ID_1, 30)
 
-    const { data: match } = await userClient.from('matches').select('kickoff_utc, match_date, match_time').eq('id', TEST_MATCH_ID_1).single()
-
+    const { data: match } = await userClient.from('matches').select('kickoff_utc').eq('id', TEST_MATCH_ID_1).single()
     const lockTime = new Date(new Date(match.kickoff_utc).getTime() - 60 * 60 * 1000)
-    const isLocked = new Date() >= lockTime
-
-    expect(isLocked).toBe(true)
+    expect(new Date() >= lockTime).toBe(true)
 
     const { createClient } = require('@supabase/supabase-js')
     const { SUPABASE_URL, SUPABASE_ANON_KEY, USER_EMAIL, USER_PASSWORD } = require('../config')
@@ -71,11 +68,7 @@ describe('Section 1 — Prediction Lock (API)', () => {
       predicted_score_b: 1,
     }, { onConflict: 'user_id,match_id' })
 
-    if (error) {
-      expect(error.message).toMatch(/row-level security|violates|policy|lock/i)
-    } else {
-      console.log('⚠ NOTE: RLS did not block the insert. Prediction lock is enforced only in the UI layer.')
-      expect(true).toBe(true)
-    }
+    expect(error).not.toBeNull()
+    expect(error.message).toMatch(/row-level security|violates|policy|lock/i)
   })
 })
