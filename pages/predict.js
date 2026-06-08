@@ -169,8 +169,6 @@ export default function Predict() {
       alert('Please select both a result and scoreline.')
       return
     }
-    // Capture scroll position before any state updates
-    const scrollY = window.scrollY
     setSaving(s => ({ ...s, [match.id]: true }))
     const { error } = await supabase.from('predictions').upsert({
       user_id: user.id, match_id: match.id,
@@ -198,8 +196,6 @@ export default function Predict() {
       }))
       setEditing(prev => ({ ...prev, [match.id]: false }))
       setPredictions(prev => { const next = { ...prev }; delete next[match.id]; return next })
-      // Restore scroll position after React re-renders
-      requestAnimationFrame(() => { window.scrollTo({ top: scrollY, behavior: 'instant' }) })
     }
     setSaving(s => ({ ...s, [match.id]: false }))
   }

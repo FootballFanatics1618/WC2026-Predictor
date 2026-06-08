@@ -7,7 +7,7 @@ import { supabase } from '../lib/supabase'
 import { ALL_PLAYERS } from '../lib/data'
 import { useDragScroll } from '../hooks/useDragScroll'
 import { toIST } from '../lib/flags'
-import { format, parseISO, formatDistanceToNow, isToday, isBefore, startOfDay } from 'date-fns'
+import { format, parseISO, formatDistanceToNow, isToday } from 'date-fns'
 
 const ADMIN_EMAILS = process.env.NEXT_PUBLIC_ADMIN_EMAILS
   ? process.env.NEXT_PUBLIC_ADMIN_EMAILS.split(',').map(e => e.trim())
@@ -61,12 +61,7 @@ export default function Admin() {
   const [loading, setLoading]       = useState(true)
   const [showStandings, setShowStandings] = useState(false)
   const [showCompleted, setShowCompleted] = useState(false)
-  const [activeTab, setActiveTab]   = useState('results') // 'results' | 'sync' | 'gb' | 'others'
-  // Others' predictions state
-  const [othersProfiles, setOthersProfiles] = useState([])
-  const [allPredictions, setAllPredictions] = useState([])
-  const [othersSelectedDate, setOthersSelectedDate] = useState(null)
-  const [othersSelectedMatch, setOthersSelectedMatch] = useState(null)
+  const [activeTab, setActiveTab]   = useState('results') // 'results' | 'sync' | 'gb'
   // Sync state
   const [syncing, setSyncing]       = useState(false)
   const [syncLog, setSyncLog]       = useState([])
@@ -86,7 +81,7 @@ export default function Admin() {
     setUser(session.user)
     if (!ADMIN_EMAILS.includes(session.user.email)) { setLoading(false); return }
     setIsAdmin(true)
-    await Promise.all([loadMatches(), loadStandings(), loadSyncLog(), loadGbStatus(), loadOthersData()])
+    await Promise.all([loadMatches(), loadStandings(), loadSyncLog(), loadGbStatus()])
     setLoading(false)
   }
 
@@ -107,15 +102,6 @@ export default function Admin() {
   async function loadStandings() {
     const { data } = await supabase.from('group_standings').select('*').order('group_name').order('points', { ascending: false })
     setStandings(data || [])
-  }
-
-  async function loadOthersData() {
-    const [profilesRes, predsRes] = await Promise.all([
-      supabase.from('profiles').select('id, username, first_name, last_name, golden_boot_pick'),
-      supabase.from('predictions').select('*'),
-    ])
-    setOthersProfiles(profilesRes.data || [])
-    setAllPredictions(predsRes.data || [])
   }
 
   const loadSyncLog = useCallback(async () => {
@@ -541,9 +527,6 @@ export default function Admin() {
           </button>
           <button className={`tab-btn ${activeTab==='gb'?'active':''}`} onClick={() => setActiveTab('gb')}>
             Golden Boot
-          </button>
-          <button className={`tab-btn ${activeTab==='others'?'active':''}`} onClick={() => { setActiveTab('others'); loadOthersData(); setOthersSelectedDate(null); setOthersSelectedMatch(null) }}>
-            Others' Picks
           </button>
         </div>
 
@@ -1081,233 +1064,6 @@ export default function Admin() {
             )}
           </>
         )}
-
-        {/* ── OTHERS' PICKS TAB ────────────────────────────────────────────── */}
-        {activeTab === 'others' && (() => {
-          const byDate = {}
-          matches.forEach(m => {
-            if (!byDate[m.match_date]) byDate[m.match_date] = []
-            byDate[m.match_date].push(m)
-          })
-          const dates = Object.keys(byDate).sort()
-
-          function getOthersPred(userId, matchId) {
-            return allPredictions.find(p => p.user_id === userId && p.match_id === matchId)
-          }
-          function displayName(p) {
-            if (p.first_name && p.last_name) return `${p.first_name} ${p.last_name}`
-            return p.username || 'Unknown'
-          }
-          function getResultLabel(result, teamA, teamB) {
-            if (result === 'teamA') return `${teamA} Win`
-            if (result === 'teamB') return `${teamB} Win`
-            if (result === 'draw') return 'Draw'
-            return ''
-          }
-
-          // ── Match detail view
-          if (othersSelectedMatch) {
-            const match = othersSelectedMatch
-            const isCompleted = match.result !== null
-            const ordered = [...othersProfiles].sort((a, b) => displayName(a).localeCompare(displayName(b)))
-            return (
-              <div>
-                <div style={{display:'flex',alignItems:'center',gap:'0.5rem',marginBottom:'1.25rem',fontSize:'0.875rem',color:'var(--gray-500)'}}>
-                  <button onClick={() => { setOthersSelectedMatch(null) }} style={{background:'none',border:'none',color:'var(--gray-500)',cursor:'pointer',padding:0}}>Others' Picks</button>
-                  <span>›</span>
-                  <button onClick={() => { setOthersSelectedMatch(null) }} style={{background:'none',border:'none',color:'var(--gray-500)',cursor:'pointer',padding:0}}>
-                    {format(parseISO(match.match_date),'EEE, MMM d')}
-                  </button>
-                  <span>›</span>
-                  <span style={{color:'var(--white)'}}>{match.team_a} vs {match.team_b}</span>
-                </div>
-
-                <div className="card" style={{padding:'1rem 1.25rem',marginBottom:'1.25rem'}}>
-                  <div style={{display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap',marginBottom:'0.4rem'}}>
-                    <span style={{display:'flex',alignItems:'center',gap:'6px',fontFamily:'var(--font-display)',fontSize:'1.3rem',color:'var(--white)'}}>
-                      <FlagImg team={match.team_a} size={24}/>{match.team_a}
-                    </span>
-                    <span style={{color:'var(--gray-500)',fontSize:'0.9rem'}}>vs</span>
-                    <span style={{display:'flex',alignItems:'center',gap:'6px',fontFamily:'var(--font-display)',fontSize:'1.3rem',color:'var(--white)'}}>
-                      <FlagImg team={match.team_b} size={24}/>{match.team_b}
-                    </span>
-                    {isCompleted && <span className="match-result-badge" style={{marginLeft:'0.5rem'}}>{match.score_a}–{match.score_b}</span>}
-                  </div>
-                  <div style={{fontSize:'0.78rem',color:'var(--gray-500)'}}>
-                    {toIST(match.match_time)}{match.group_name ? ` · Group ${match.group_name}` : ''} · {match.stage}
-                  </div>
-                </div>
-
-                <h2 style={{fontFamily:'var(--font-display)',fontSize:'1.2rem',color:'var(--white)',marginBottom:'0.9rem'}}>
-                  ALL PREDICTIONS ({ordered.filter(p => getOthersPred(p.id, match.id)).length}/{ordered.length})
-                </h2>
-                <div style={{display:'flex',flexDirection:'column',gap:'0.5rem'}}>
-                  {ordered.map(p => {
-                    const pred = getOthersPred(p.id, match.id)
-                    const isCorrectResult = pred?.is_result_correct
-                    const isCorrectScore = pred?.is_score_correct
-                    return (
-                      <div key={p.id} style={{
-                        display:'flex',alignItems:'center',justifyContent:'space-between',
-                        padding:'0.8rem 1.1rem',
-                        background:'rgba(30,30,26,0.9)',
-                        border:'1px solid rgba(255,255,255,0.07)',
-                        borderRadius:'var(--radius-lg)',
-                        flexWrap:'wrap',gap:'0.5rem',
-                      }}>
-                        <div style={{display:'flex',alignItems:'center',gap:'0.55rem',minWidth:'130px'}}>
-                          <span style={{fontSize:'1rem'}}>👤</span>
-                          <span style={{fontWeight:500,color:'var(--white)',fontSize:'0.9rem'}}>{displayName(p)}</span>
-                        </div>
-                        {pred ? (
-                          <div style={{display:'flex',alignItems:'center',gap:'0.75rem',flexWrap:'wrap'}}>
-                            <div style={{display:'flex',alignItems:'center',gap:'5px'}}>
-                              <FlagImg team={pred.predicted_result==='teamA'?match.team_a:pred.predicted_result==='teamB'?match.team_b:null} size={16}/>
-                              <span style={{fontSize:'0.875rem',color:'var(--white)',fontWeight:500}}>{getResultLabel(pred.predicted_result,match.team_a,match.team_b)}</span>
-                            </div>
-                            <span style={{fontFamily:'var(--font-display)',fontSize:'1.05rem',color:'var(--white)',letterSpacing:'0.04em'}}>
-                              {pred.predicted_score_a}–{pred.predicted_score_b}
-                            </span>
-                            {isCompleted && (
-                              isCorrectScore
-                                ? <span className="points-chip points-5">+5 pts ⚡</span>
-                                : isCorrectResult
-                                  ? <span className="points-chip points-3">+3 pts ✓</span>
-                                  : <span className="points-chip points-0">0 pts</span>
-                            )}
-                          </div>
-                        ) : (
-                          <span style={{color:'var(--gray-500)',fontSize:'0.875rem',fontStyle:'italic'}}>No prediction</span>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-            )
-          }
-
-          // ── Date detail view
-          if (othersSelectedDate) {
-            const dayMatches = byDate[othersSelectedDate] || []
-            return (
-              <div>
-                <div style={{display:'flex',alignItems:'center',gap:'0.5rem',marginBottom:'1.25rem',fontSize:'0.875rem',color:'var(--gray-500)'}}>
-                  <button onClick={() => setOthersSelectedDate(null)} style={{background:'none',border:'none',color:'var(--gray-500)',cursor:'pointer',padding:0}}>Others' Picks</button>
-                  <span>›</span>
-                  <span style={{color:'var(--white)'}}>{format(parseISO(othersSelectedDate),'EEEE, MMMM d yyyy')}</span>
-                </div>
-                <h2 style={{fontFamily:'var(--font-display)',fontSize:'1.4rem',color:'var(--white)',marginBottom:'0.5rem'}}>
-                  {isToday(parseISO(othersSelectedDate)) ? '⚡ Today' : format(parseISO(othersSelectedDate),'EEE, MMM d')}
-                </h2>
-                <p style={{color:'var(--gray-500)',fontSize:'0.875rem',marginBottom:'1.25rem'}}>
-                  {dayMatches.length} match{dayMatches.length!==1?'es':''} — tap a match to see all predictions
-                </p>
-                <div style={{display:'flex',flexDirection:'column',gap:'0.65rem'}}>
-                  {dayMatches.map(match => {
-                    const isCompleted = match.result !== null
-                    const totalPreds = othersProfiles.filter(p => getOthersPred(p.id, match.id)).length
-                    return (
-                      <button
-                        key={match.id}
-                        onClick={() => setOthersSelectedMatch(match)}
-                        style={{
-                          background:'rgba(30,30,26,0.9)',
-                          border: isCompleted ? '1px solid rgba(245,200,66,0.2)' : '1px solid rgba(255,255,255,0.07)',
-                          borderRadius:'var(--radius-lg)',
-                          padding:'1rem 1.2rem',
-                          cursor:'pointer',textAlign:'left',width:'100%',
-                          transition:'border-color 0.15s',
-                        }}
-                        onMouseEnter={e => e.currentTarget.style.borderColor='rgba(245,200,66,0.4)'}
-                        onMouseLeave={e => e.currentTarget.style.borderColor=isCompleted?'rgba(245,200,66,0.2)':'rgba(255,255,255,0.07)'}
-                      >
-                        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:'0.5rem',flexWrap:'wrap',gap:'0.4rem'}}>
-                          <span style={{fontSize:'0.72rem',fontWeight:600,color:'var(--gray-500)',textTransform:'uppercase',letterSpacing:'0.06em'}}>
-                            {match.stage}{match.group_name ? ` · Group ${match.group_name}` : ''} · {toIST(match.match_time)}
-                          </span>
-                          <div style={{display:'flex',gap:'0.4rem',alignItems:'center'}}>
-                            {isCompleted && <span className="match-result-badge">{match.score_a}–{match.score_b}</span>}
-                            <span style={{fontSize:'0.75rem',color:'var(--gray-500)',background:'rgba(255,255,255,0.06)',padding:'2px 8px',borderRadius:'99px'}}>
-                              {totalPreds}/{othersProfiles.length} picks
-                            </span>
-                            <span style={{color:'var(--gold)',fontSize:'0.85rem'}}>›</span>
-                          </div>
-                        </div>
-                        <div style={{display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap'}}>
-                          <span style={{display:'flex',alignItems:'center',gap:'6px',fontFamily:'var(--font-display)',fontSize:'1.15rem',color:'var(--white)'}}>
-                            <FlagImg team={match.team_a} size={20}/>{match.team_a}
-                          </span>
-                          <span style={{color:'var(--gray-500)',fontSize:'0.85rem'}}>vs</span>
-                          <span style={{display:'flex',alignItems:'center',gap:'6px',fontFamily:'var(--font-display)',fontSize:'1.15rem',color:'var(--white)'}}>
-                            <FlagImg team={match.team_b} size={20}/>{match.team_b}
-                          </span>
-                        </div>
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-            )
-          }
-
-          // ── Date list view
-          return (
-            <div>
-              <p style={{color:'var(--gray-500)',fontSize:'0.9rem',marginBottom:'1.25rem'}}>
-                All predictions visible to admins regardless of match status. Pick a date, then a match.
-              </p>
-              {dates.length === 0 ? (
-                <div className="card" style={{textAlign:'center',padding:'2rem',color:'var(--gray-500)'}}>
-                  No matches found.
-                </div>
-              ) : (
-                <div style={{display:'flex',flexDirection:'column',gap:'0.6rem'}}>
-                  {dates.map(d => {
-                    const dayMatches = byDate[d]
-                    const completed = dayMatches.filter(m => m.result !== null).length
-                    const total = dayMatches.length
-                    return (
-                      <button
-                        key={d}
-                        onClick={() => setOthersSelectedDate(d)}
-                        style={{
-                          display:'flex',alignItems:'center',justifyContent:'space-between',
-                          padding:'1rem 1.2rem',
-                          background:'rgba(30,30,26,0.9)',
-                          border:'1px solid rgba(255,255,255,0.07)',
-                          borderRadius:'var(--radius-lg)',
-                          cursor:'pointer',textAlign:'left',width:'100%',
-                          transition:'border-color 0.15s',
-                        }}
-                        onMouseEnter={e => e.currentTarget.style.borderColor='rgba(245,200,66,0.3)'}
-                        onMouseLeave={e => e.currentTarget.style.borderColor='rgba(255,255,255,0.07)'}
-                      >
-                        <div>
-                          <div style={{fontWeight:600,fontSize:'1rem',color:isToday(parseISO(d))?'var(--gold)':'var(--white)',marginBottom:'0.2rem'}}>
-                            {isToday(parseISO(d)) ? '⚡ Today — ' : isBefore(startOfDay(parseISO(d)), startOfDay(new Date())) ? '' : '🗓 '}
-                            {format(parseISO(d),'EEEE, MMMM d yyyy')}
-                          </div>
-                          <div style={{fontSize:'0.82rem',color:'var(--gray-500)'}}>
-                            {total} match{total!==1?'es':''} · {completed} completed
-                          </div>
-                        </div>
-                        <div style={{display:'flex',alignItems:'center',gap:'0.6rem'}}>
-                          <div style={{display:'flex',gap:'3px',flexWrap:'wrap',maxWidth:'110px'}}>
-                            {dayMatches.slice(0,6).flatMap(m=>[m.team_a,m.team_b]).map((t,i)=>(
-                              <FlagImg key={i} team={t} size={15}/>
-                            ))}
-                          </div>
-                          <span style={{color:'var(--gold)',fontSize:'1rem'}}>›</span>
-                        </div>
-                      </button>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
-          )
-        })()}
       </div>
     </>
   )
