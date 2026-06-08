@@ -58,7 +58,6 @@ export default function Navbar({ user }) {
           {user ? (
             <>
               <Link href="/predict" className={navClass('/predict')}>Predict</Link>
-              <Link href="/others" className={navClass('/others')}>Others</Link>
               <Link href="/leaderboard" className={navClass('/leaderboard')}>Leaderboard</Link>
               {isAdmin && <Link href="/admin" className={navClass('/admin')}>Admin</Link>}
               <button onClick={() => setShowSignOutModal(true)} className="nav-btn nav-btn-ghost nav-btn-icon" aria-label="Sign out">
