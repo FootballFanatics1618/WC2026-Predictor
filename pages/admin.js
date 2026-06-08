@@ -505,19 +505,28 @@ export default function Admin() {
   if (!isAdmin) return <><Navbar user={user}/><div className="page" style={{textAlign:'center',paddingTop:'5rem',color:'var(--gray-500)'}}>⛔ No admin access.</div></>
 
   // ── Derived data ──────────────────────────────────────────────────────────
+  // All dates and grouping are in IST (India Standard Time, UTC+5:30).
+  // match_date in the DB is the ET date; matchISTDate() converts to IST calendar date.
+
   const stageMatches = matches.filter(m => m.stage === activeStage)
   const totalDone = matches.filter(m => m.result !== null).length
 
-  // Build a sorted list of unique dates within the current stage
-  const stageDates = [...new Set(stageMatches.map(m => m.match_date))].sort()
+  // Build IST-date → [matches] map for the active stage
+  const stageByISTDate = {}
+  stageMatches.forEach(m => {
+    const istDate = matchISTDate(m.match_date, m.match_time)
+    if (!stageByISTDate[istDate]) stageByISTDate[istDate] = []
+    stageByISTDate[istDate].push(m)
+  })
+  const stageDates = Object.keys(stageByISTDate).sort()   // IST date strings
 
-  // Auto-select the first date in this stage when the stage changes
+  // Auto-select the first IST date in this stage when the stage changes
   const activeDayDate = selectedDay && stageDates.includes(selectedDay)
     ? selectedDay
     : stageDates[0] || null
 
-  // Matches on the selected day
-  const dayMatches = stageMatches.filter(m => m.match_date === activeDayDate)
+  // Matches on the selected IST day
+  const dayMatches = stageByISTDate[activeDayDate] || []
   const pendingOnDay = dayMatches.filter(m => m.result === null)
   const completedOnDay = dayMatches.filter(m => m.result !== null)
 
@@ -531,11 +540,10 @@ export default function Admin() {
     standingsByGroup[g] = sortStandings(standings.filter(s => s.group_name === g))
   })
 
-  function dayLabel(dateStr) {
-    // dateStr is an ET date string from the DB — compare as ET date for admin display
-    const istNow = todayIST()
-    const todayFlag = dateStr === istNow
-    const d = parseISO(dateStr)
+  function dayLabel(istDateStr) {
+    // istDateStr is already an IST calendar date ("YYYY-MM-DD")
+    const todayFlag = istDateStr === todayIST()
+    const d = parseISO(istDateStr)
     return (todayFlag ? '📅 Today · ' : '') + format(d, 'EEE, MMM d')
   }
 
@@ -617,7 +625,7 @@ export default function Admin() {
                 </button>
                 {lastSync && (
                   <span style={{fontSize:'0.8rem',color:'var(--gray-500)'}}>
-                    Last run: {format(new Date(lastSync.ran_at), 'MMM d, HH:mm')} UTC
+                    Last run: {format(new Date(new Date(lastSync.ran_at).getTime() + 5.5*3600000), 'MMM d, HH:mm')} IST
                     · source: <strong style={{color:'var(--gray-300)'}}>{lastSync.source}</strong>
                   </span>
                 )}
@@ -641,7 +649,7 @@ export default function Admin() {
                 {syncLog.map(row => (
                   <div key={row.id} className="card" style={{padding:'0.6rem 1rem',display:'grid',gridTemplateColumns:'1fr 60px 60px 60px 80px',gap:'0.5rem',alignItems:'center'}}>
                     <span style={{fontSize:'0.82rem',color:'var(--gray-300)'}}>
-                      {format(new Date(row.ran_at), 'MMM d, HH:mm')}
+                      {format(new Date(new Date(row.ran_at).getTime() + 5.5*3600000), 'MMM d, HH:mm')} IST
                       <span style={{color:'var(--gray-500)',fontSize:'0.75rem'}}> · {formatDistanceToNow(new Date(row.ran_at), { addSuffix: true })}</span>
                     </span>
                     <span style={{fontSize:'0.82rem',textAlign:'center',color:'var(--gray-400)'}}>{row.matches_checked}</span>
@@ -777,21 +785,24 @@ export default function Admin() {
             {stageDates.length > 0 && (
               <div style={{marginBottom:'1.5rem'}}>
                 <div ref={dayScrollRef} className="scroll-row">
-                  {stageDates.map(dateStr => {
-                    const pendingCount = stageMatches.filter(m => m.match_date===dateStr && m.result===null).length
+                  {stageDates.map(istDateStr => {
+                    // stageDates are IST date strings; stageByISTDate groups matches by IST date
+                    const matchesOnDay = stageByISTDate[istDateStr] || []
+                    const pendingCount = matchesOnDay.filter(m => m.result === null).length
                     const allDone = pendingCount === 0
-                    const isActive = activeDayDate === dateStr
+                    const isActive = activeDayDate === istDateStr
+                    const isToday = istDateStr === todayIST()
                     return (
                       <button
-                        key={dateStr}
+                        key={istDateStr}
                         ref={isActive ? dayPillRef : null}
-                        onClick={()=>{ preserveScroll(); setSelectedDay(dateStr); setShowCompleted(false) }}
+                        onClick={()=>{ preserveScroll(); setSelectedDay(istDateStr); setShowCompleted(false) }}
                         style={{
                           padding:'0.4rem 0.85rem',
                           borderRadius:'99px',
                           border: isActive ? '1.5px solid var(--gold)' : '1px solid rgba(255,255,255,0.12)',
                           background: isActive ? 'rgba(245,200,66,0.12)' : 'transparent',
-                          color: isActive ? 'var(--gold)' : 'var(--gray-300)',
+                          color: isActive ? 'var(--gold)' : isToday ? '#f6ad55' : 'var(--gray-300)',
                           fontSize:'0.82rem',
                           fontWeight: isActive ? 700 : 400,
                           cursor:'pointer',
@@ -801,7 +812,7 @@ export default function Admin() {
                           gap:'5px',
                         }}
                       >
-                        {format(parseISO(dateStr),'EEE, MMM d')}
+                        {isToday ? '📅 ' : ''}{format(parseISO(istDateStr),'EEE, MMM d')}
                         {allDone
                           ? <span style={{fontSize:'0.85rem',color:'var(--success)'}}>✅</span>
                           : <span style={{fontSize:'0.7rem',borderRadius:'99px',padding:'1px 6px',background:'rgba(255,255,255,0.08)',color:'var(--gray-500)'}}>{pendingCount}</span>
@@ -853,7 +864,7 @@ export default function Admin() {
                           <span style={{display:'inline-flex',alignItems:'center',gap:'6px'}}><FlagImg team={match.team_b} size={20} />{match.team_b}</span>
                         </div>
                         <div style={{fontSize:'0.75rem',color:'var(--gray-500)'}}>
-                          {toIST(match.match_time)}
+                          {format(parseISO(matchISTDate(match.match_date, match.match_time)), 'EEE, MMM d')} · {toIST(match.match_time)}
                           {match.group_name ? ` · Group ${match.group_name}` : ''}
                           {isKnockout && !bothKnown && (
                             <span style={{color:'var(--gold)',marginLeft:'0.5rem'}}>⏳ Awaiting group results</span>
@@ -959,7 +970,7 @@ export default function Admin() {
                               <span style={{display:'inline-flex',alignItems:'center',gap:'4px',fontSize:'0.88rem',fontWeight:500}}><FlagImg team={m.team_a} size={18} />{m.team_a}</span>
                               <span style={{color:'var(--gray-500)',fontSize:'0.8rem'}}>vs</span>
                               <span style={{display:'inline-flex',alignItems:'center',gap:'4px',fontSize:'0.88rem',fontWeight:500}}><FlagImg team={m.team_b} size={18} />{m.team_b}</span>
-                              <span style={{fontSize:'0.73rem',color:'var(--gray-500)',marginLeft:'0.5rem'}}>{toIST(m.match_time)}</span>
+                              <span style={{fontSize:'0.73rem',color:'var(--gray-500)',marginLeft:'0.5rem'}}>{format(parseISO(matchISTDate(m.match_date, m.match_time)), 'MMM d')} · {toIST(m.match_time)}</span>
                             </div>
                             <div style={{display:'flex',alignItems:'center',gap:'0.5rem'}}>
                               <span className="match-result-badge">{m.score_a}–{m.score_b}</span>
@@ -1152,10 +1163,12 @@ export default function Admin() {
 
         {/* ── OTHERS' PICKS TAB ────────────────────────────────────────────── */}
         {activeTab === 'others' && (() => {
+          // Group matches by their IST calendar date for display
           const byDate = {}
           matches.forEach(m => {
-            if (!byDate[m.match_date]) byDate[m.match_date] = []
-            byDate[m.match_date].push(m)
+            const istDate = matchISTDate(m.match_date, m.match_time)
+            if (!byDate[istDate]) byDate[istDate] = []
+            byDate[istDate].push(m)
           })
           const dates = Object.keys(byDate).sort()
 
@@ -1184,12 +1197,7 @@ export default function Admin() {
                   <button onClick={() => { setOthersSelectedMatch(null) }} style={{background:'none',border:'none',color:'var(--gray-500)',cursor:'pointer',padding:0}}>Others' Picks</button>
                   <span>›</span>
                   <button onClick={() => { setOthersSelectedMatch(null) }} style={{background:'none',border:'none',color:'var(--gray-500)',cursor:'pointer',padding:0}}>
-                    {(() => {
-                      const { dayOffset } = toISTFull(match.match_time)
-                      const baseDate = parseISO(match.match_date)
-                      const istDate = dayOffset ? new Date(baseDate.getTime() + 86400000) : baseDate
-                      return format(istDate, 'EEE, MMM d')
-                    })()}
+                    {format(parseISO(matchISTDate(match.match_date, match.match_time)), 'EEE, MMM d')}
                   </button>
                   <span>›</span>
                   <span style={{color:'var(--white)'}}>{match.team_a} vs {match.team_b}</span>
