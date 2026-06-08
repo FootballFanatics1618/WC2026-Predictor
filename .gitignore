@@ -2,4 +2,7 @@ node_modules/
 .next/
 .env.local
 .env
+.env.test
 out/
+test-results/
+tests/config.js

@@ -1,13 +1,15 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import Navbar from '../components/Navbar'
 import FlagImg from '../components/FlagImg'
 import { supabase } from '../lib/supabase'
+import { useDragScroll } from '../hooks/useDragScroll'
 
 export default function Leaderboard() {
   const [user, setUser] = useState(null)
   const [profile, setProfile] = useState(null)
   const [table, setTable] = useState([])
   const [loading, setLoading] = useState(true)
+  const tableScrollRef = useDragScroll()
 
   useEffect(() => {
     init()
@@ -36,7 +38,8 @@ export default function Leaderboard() {
       const matchesPredicted = userPreds.length
       const correctResults = userPreds.filter(pr => pr.is_result_correct).length
       const correctScorelines = userPreds.filter(pr => pr.is_score_correct).length
-      const points = (predictions || []).filter(pr => pr.user_id === p.id).reduce((sum, pr) => sum + (pr.points_earned || 0), 0)
+      const gbBonus = p.golden_boot_correct ? 10 : 0
+      const points = (predictions || []).filter(pr => pr.user_id === p.id).reduce((sum, pr) => sum + (pr.points_earned || 0), 0) + gbBonus
       return {
         id: p.id, username: p.first_name && p.last_name ? `${p.first_name} ${p.last_name}` : p.username, goldenBoot: p.golden_boot_pick,
         goldenBootCorrect: p.golden_boot_correct || false,
@@ -101,7 +104,7 @@ export default function Leaderboard() {
           {loading ? (
             <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--gray-500)' }}>Loading table...</div>
           ) : (
-            <div className="table-wrap">
+            <div className="table-wrap" ref={tableScrollRef}>
               <table>
                 <thead>
                   <tr>
@@ -120,7 +123,7 @@ export default function Leaderboard() {
                     const isMe = row.id === profile?.id
                     return (
                       <tr key={row.id} style={isMe ? { background: 'rgba(245,200,66,0.06)' } : {}}>
-                        <td>
+                        <td style={{ background: isMe ? 'rgba(245,200,66,0.06)' : 'var(--gray-900)' }}>
                           {rank <= 3
                             ? <span style={{ fontSize: '1.1rem' }}>{medalEmoji(rank)}</span>
                             : <span style={{ color: 'var(--gray-500)', fontSize: '0.9rem' }}>{rank}</span>}
@@ -152,6 +155,7 @@ export default function Leaderboard() {
           <p style={{ fontSize: '0.8rem', color: 'var(--gray-500)', marginTop: '0.25rem' }}>
             Ranking: Points → CS → CR (Final day: Points → GB → CS → CR) · Auto-refreshes every 30s
           </p>
+          <div className="scroll-hint">← scroll →</div>
         </div>
       </div>
     </>

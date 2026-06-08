@@ -1,11 +1,17 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter } from 'next/router'
 import Navbar from '../components/Navbar'
+import GoldenBootPicker from '../components/GoldenBootPicker'
+import FlagImg from '../components/FlagImg'
 import { supabase } from '../lib/supabase'
 import { ALL_PLAYERS } from '../lib/data'
-import { format, parseISO, isToday } from 'date-fns'
+import { useDragScroll } from '../hooks/useDragScroll'
+import { toIST } from '../lib/flags'
+import { format, parseISO, formatDistanceToNow, isToday, isBefore, startOfDay } from 'date-fns'
 
-const ADMIN_EMAILS = ['your-email@gmail.com', 'admin589@gmail.com']
+const ADMIN_EMAILS = process.env.NEXT_PUBLIC_ADMIN_EMAILS
+  ? process.env.NEXT_PUBLIC_ADMIN_EMAILS.split(',').map(e => e.trim())
+  : []
 const STAGE_ORDER = ['Group Stage','Round of 32','Round of 16','Quarter-final','Semi-final','3rd Place Play-off','Final']
 
 // Group teams — must match data.js
@@ -37,24 +43,40 @@ function sortStandings(rows) {
 
 export default function Admin() {
   const router = useRouter()
-  const [user, setUser] = useState(null)
-  const [isAdmin, setIsAdmin] = useState(false)
-  const [matches, setMatches] = useState([])
-  const [standings, setStandings] = useState([])
+  const [user, setUser]             = useState(null)
+  const [isAdmin, setIsAdmin]       = useState(false)
+  const [matches, setMatches]       = useState([])
+  const [standings, setStandings]   = useState([])
   const [resultForm, setResultForm] = useState({})
-  const [saving, setSaving] = useState({})
-  const [editingMatch, setEditingMatch] = useState(null) // match being edited in completed section
-  // Golden boot search+dropdown
-  const [gbSearch, setGbSearch] = useState('')
-  const [gbPick, setGbPick] = useState('')
-  const [gbOpen, setGbOpen] = useState(false)
-  const [gbSaving, setGbSaving] = useState(false)
-  const [message, setMessage] = useState('')
+  const [saving, setSaving]         = useState({})
+  const [editingMatch, setEditingMatch] = useState(null)
+  const [gbSearch, setGbSearch]     = useState('')
+  const [gbPick, setGbPick]         = useState('')
+  const [gbOpen, setGbOpen]         = useState(false)
+  const [gbSaving, setGbSaving]     = useState(false)
+  const [gbAwardedName, setGbAwardedName] = useState(null)
+  const [message, setMessage]       = useState('')
   const [activeStage, setActiveStage] = useState('Group Stage')
   const [selectedDay, setSelectedDay] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading]       = useState(true)
   const [showStandings, setShowStandings] = useState(false)
   const [showCompleted, setShowCompleted] = useState(false)
+  const [activeTab, setActiveTab]   = useState('results') // 'results' | 'sync' | 'gb' | 'others'
+  // Others' predictions state
+  const [othersProfiles, setOthersProfiles] = useState([])
+  const [allPredictions, setAllPredictions] = useState([])
+  const [othersSelectedDate, setOthersSelectedDate] = useState(null)
+  const [othersSelectedMatch, setOthersSelectedMatch] = useState(null)
+  // Sync state
+  const [syncing, setSyncing]       = useState(false)
+  const [syncLog, setSyncLog]       = useState([])
+  const [syncLogLoading, setSyncLogLoading] = useState(false)
+  const [lastSync, setLastSync]     = useState(null)
+
+  const dayPillRef = useRef(null)
+  const dayScrollRef = useDragScroll()
+
+  useEffect(() => { dayPillRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' }) }, [selectedDay])
 
   useEffect(() => { init() }, [])
 
@@ -64,8 +86,17 @@ export default function Admin() {
     setUser(session.user)
     if (!ADMIN_EMAILS.includes(session.user.email)) { setLoading(false); return }
     setIsAdmin(true)
-    await Promise.all([loadMatches(), loadStandings()])
+    await Promise.all([loadMatches(), loadStandings(), loadSyncLog(), loadGbStatus(), loadOthersData()])
     setLoading(false)
+  }
+
+  async function loadGbStatus() {
+    const { data } = await supabase.from('profiles').select('golden_boot_pick').eq('golden_boot_correct', true).limit(1).maybeSingle()
+    if (data?.golden_boot_pick) {
+      setGbAwardedName(data.golden_boot_pick)
+      setGbPick(data.golden_boot_pick)
+      setGbSearch(data.golden_boot_pick)
+    }
   }
 
   async function loadMatches() {
@@ -76,6 +107,61 @@ export default function Admin() {
   async function loadStandings() {
     const { data } = await supabase.from('group_standings').select('*').order('group_name').order('points', { ascending: false })
     setStandings(data || [])
+  }
+
+  async function loadOthersData() {
+    const [profilesRes, predsRes] = await Promise.all([
+      supabase.from('profiles').select('id, username, first_name, last_name, golden_boot_pick'),
+      supabase.from('predictions').select('*'),
+    ])
+    setOthersProfiles(profilesRes.data || [])
+    setAllPredictions(predsRes.data || [])
+  }
+
+  const loadSyncLog = useCallback(async () => {
+    setSyncLogLoading(true)
+    const { data } = await supabase
+      .from('sync_log')
+      .select('*')
+      .order('ran_at', { ascending: false })
+      .limit(20)
+    setSyncLog(data || [])
+    if (data?.[0]) setLastSync(data[0])
+    setSyncLogLoading(false)
+  }, [])
+
+  // ── Manual "Sync Now" — calls the edge function directly ─────────────────
+  async function triggerSync() {
+    setSyncing(true)
+    setMessage('')
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/sync-scores?source=manual`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({}),
+        }
+      )
+      const result = await res.json()
+      if (result.error) {
+        setMessage(`❌ Sync failed: ${result.error}`)
+      } else {
+        setMessage(
+          `✅ Sync complete — ${result.matchesUpdated} match(es) updated, ` +
+          `${result.predictionsScored} predictions scored.` +
+          (result.errors?.length ? ` ⚠️ ${result.errors.length} error(s).` : '')
+        )
+        await Promise.all([loadMatches(), loadStandings(), loadSyncLog()])
+      }
+    } catch (err) {
+      setMessage(`❌ Sync error: ${err.message}`)
+    }
+    setSyncing(false)
   }
 
   function handleResultInput(matchId, field, value) {
@@ -149,6 +235,76 @@ export default function Admin() {
     }
 
     setMessage(`✅ ${match.team_a} ${scoreA}–${scoreB} ${match.team_b} ${isEdit ? 'updated' : 'saved'}! ${scoredCount}/${preds?.length || 0} predictions scored.`)
+    await Promise.all([loadMatches(), loadStandings()])
+    setSaving(s => ({ ...s, [match.id]: false }))
+    setShowCompleted(true)
+  }
+
+  async function resetResult(match) {
+    if (!confirm(`Reset result for ${match.team_a} vs ${match.team_b}?\n\nThis will clear the score and reset all predictions to null.`)) return
+    setSaving(s => ({ ...s, [match.id]: true }))
+
+    // 1. Clear match result
+    const { error: mErr } = await supabase.from('matches').update({
+      result: null, score_a: null, score_b: null,
+    }).eq('id', match.id)
+    if (mErr) {
+      alert(`❌ Could not reset result.\n\n${mErr.message}`)
+      setSaving(s => ({ ...s, [match.id]: false }))
+      return
+    }
+
+    // 2. Reset all predictions for this match
+    const { data: preds } = await supabase.from('predictions').select('*').eq('match_id', match.id)
+    let resetCount = 0
+    for (const pred of (preds || [])) {
+      const { error: uErr } = await supabase.from('predictions').update({
+        is_result_correct: null, is_score_correct: null, points_earned: null,
+      }).eq('id', pred.id)
+      if (!uErr) resetCount++
+    }
+
+    // 3. Reverse group standings (subtract old result only)
+    if (match.stage === 'Group Stage' && match.group_name && match.result) {
+      const g = match.group_name
+      const tA = match.team_a, tB = match.team_b
+      const r = match.result, sA = match.score_a, sB = match.score_b
+
+      const { data: rows } = await supabase
+        .from('group_standings')
+        .select('team,played,won,drawn,lost,goals_for,goals_against,points')
+        .eq('group_name', g).in('team', [tA, tB])
+
+      const rowA = rows?.find(x => x.team === tA)
+      const rowB = rows?.find(x => x.team === tB)
+
+      if (rowA) {
+        await supabase.from('group_standings').update({
+          played: rowA.played - 1,
+          goals_for: rowA.goals_for - sA,
+          goals_against: rowA.goals_against - sB,
+          won: rowA.won - (r === 'teamA' ? 1 : 0),
+          drawn: rowA.drawn - (r === 'draw' ? 1 : 0),
+          lost: rowA.lost - (r === 'teamB' ? 1 : 0),
+          points: rowA.points - (r === 'teamA' ? 3 : r === 'draw' ? 1 : 0),
+          updated_at: new Date().toISOString(),
+        }).eq('group_name', g).eq('team', tA)
+      }
+      if (rowB) {
+        await supabase.from('group_standings').update({
+          played: rowB.played - 1,
+          goals_for: rowB.goals_for - sB,
+          goals_against: rowB.goals_against - sA,
+          won: rowB.won - (r === 'teamB' ? 1 : 0),
+          drawn: rowB.drawn - (r === 'draw' ? 1 : 0),
+          lost: rowB.lost - (r === 'teamA' ? 1 : 0),
+          points: rowB.points - (r === 'teamB' ? 3 : r === 'draw' ? 1 : 0),
+          updated_at: new Date().toISOString(),
+        }).eq('group_name', g).eq('team', tB)
+      }
+    }
+
+    setMessage(`🔄 ${match.team_a} vs ${match.team_b} result reset. ${resetCount}/${preds?.length || 0} predictions cleared.`)
     await Promise.all([loadMatches(), loadStandings()])
     setSaving(s => ({ ...s, [match.id]: false }))
     setShowCompleted(true)
@@ -304,16 +460,22 @@ export default function Admin() {
   async function awardGoldenBoot() {
     if (!gbPick.trim()) { alert('Search and select a player first.'); return }
     setGbSaving(true)
-    const { data: winners } = await supabase.from('profiles').select('id').eq('golden_boot_pick', gbPick.trim())
-    for (const w of (winners || [])) {
-      await supabase.from('predictions').upsert({
-        user_id: w.id, match_id: 9999,
-        predicted_result: 'teamA', predicted_score_a: 0, predicted_score_b: 0,
-        is_result_correct: true, is_score_correct: false, points_earned: 10,
-      }, { onConflict: 'user_id,match_id' })
-      await supabase.from('profiles').update({ golden_boot_correct: true }).eq('id', w.id)
-    }
-    setMessage(`🥇 Golden Boot: ${gbPick}! ${winners?.length || 0} players get +10 pts.`)
+    const { data: count, error } = await supabase.rpc('award_golden_boot', { p_player: gbPick.trim() })
+    if (error) { alert(`❌ Award failed: ${error.message}`); setGbSaving(false); return }
+    setGbAwardedName(gbPick.trim())
+    setMessage(`🥇 Golden Boot: ${gbPick}! ${count || 0} players get +10 pts.`)
+    setGbSaving(false)
+  }
+
+  async function resetGoldenBoot() {
+    if (!confirm('Reset Golden Boot award? All users will lose their +10 bonus.')) return
+    setGbSaving(true)
+    const { error } = await supabase.rpc('reset_golden_boot')
+    if (error) { alert(`❌ Reset failed: ${error.message}`); setGbSaving(false); return }
+    setGbAwardedName(null)
+    setGbPick('')
+    setGbSearch('')
+    setMessage('🔄 Golden Boot award has been reset.')
     setGbSaving(false)
   }
 
@@ -321,7 +483,6 @@ export default function Admin() {
   if (!isAdmin) return <><Navbar user={user}/><div className="page" style={{textAlign:'center',paddingTop:'5rem',color:'var(--gray-500)'}}>⛔ No admin access.</div></>
 
   // ── Derived data ──────────────────────────────────────────────────────────
-
   const stageMatches = matches.filter(m => m.stage === activeStage)
   const totalDone = matches.filter(m => m.result !== null).length
 
@@ -329,7 +490,6 @@ export default function Admin() {
   const stageDates = [...new Set(stageMatches.map(m => m.match_date))].sort()
 
   // Auto-select the first date in this stage when the stage changes
-  // (handled reactively below via the derived `activeDayDate`)
   const activeDayDate = selectedDay && stageDates.includes(selectedDay)
     ? selectedDay
     : stageDates[0] || null
@@ -371,425 +531,783 @@ export default function Admin() {
           </div>
         )}
 
-        {/* ── Golden Boot ────────────────────────────────────────────── */}
-        <div className="card-gold" style={{marginBottom:'2rem'}}>
-          <h2 style={{fontFamily:'var(--font-display)',fontSize:'1.3rem',color:'var(--gold)',marginBottom:'0.5rem'}}>🥇 AWARD GOLDEN BOOT</h2>
-          <p style={{fontSize:'0.82rem',color:'var(--gray-500)',marginBottom:'0.9rem'}}>End of tournament only. Users who picked this player get +10 pts.</p>
-          {/* column layout so dropdown can overflow freely */}
-          <div style={{display:'flex',flexDirection:'column',gap:'0.75rem'}}>
-            <div style={{position:'relative'}}>
-              <label className="form-label">Search Golden Boot Winner</label>
-              <div style={{position:'relative'}}>
-                <input
-                  className="form-input"
-                  placeholder="Type player name to search..."
-                  value={gbSearch}
-                  onChange={e => { setGbSearch(e.target.value); setGbPick(''); setGbOpen(true) }}
-                  onFocus={() => setGbOpen(true)}
-                  onBlur={() => setTimeout(() => setGbOpen(false), 200)}
-                  style={{paddingRight: gbPick ? '2.2rem' : '0.9rem'}}
-                />
-                {gbPick && <span style={{position:'absolute',right:'0.7rem',top:'50%',transform:'translateY(-50%)',color:'#68d391',fontSize:'1rem'}}>✓</span>}
+        {/* Top-level tabs */}
+        <div className="tabs" style={{marginBottom:'1.5rem'}}>
+          <button className={`tab-btn ${activeTab==='results'?'active':''}`} onClick={() => setActiveTab('results')}>
+            Match Results
+          </button>
+          <button className={`tab-btn ${activeTab==='sync'?'active':''}`} onClick={() => { setActiveTab('sync'); loadSyncLog() }}>
+            Auto-Sync
+          </button>
+          <button className={`tab-btn ${activeTab==='gb'?'active':''}`} onClick={() => setActiveTab('gb')}>
+            Golden Boot
+          </button>
+          <button className={`tab-btn ${activeTab==='others'?'active':''}`} onClick={() => { setActiveTab('others'); loadOthersData(); setOthersSelectedDate(null); setOthersSelectedMatch(null) }}>
+            Others' Picks
+          </button>
+        </div>
+
+        {/* ── SYNC TAB ──────────────────────────────────────────────────── */}
+        {activeTab === 'sync' && (
+          <div>
+            <div className="card-gold" style={{marginBottom:'1.5rem'}}>
+              <h2 style={{fontFamily:'var(--font-display)',fontSize:'1.3rem',color:'var(--gold)',marginBottom:'0.5rem'}}>
+                🔄 SCORE SYNC
+              </h2>
+              <p style={{fontSize:'0.85rem',color:'var(--gray-400)',marginBottom:'1rem',lineHeight:'1.6'}}>
+                The sync function runs automatically via pg_cron at 8 scheduled times per day —
+                timed to fire ~30 min after each match window ends. No constant polling.
+                Use <strong style={{color:'var(--white)'}}>Sync Now</strong> to trigger manually if a result seems delayed.
+              </p>
+
+              {/* Schedule display */}
+              <div style={{background:'rgba(0,0,0,0.2)',borderRadius:'var(--radius)',padding:'0.875rem 1rem',marginBottom:'1.25rem',fontSize:'0.8rem',color:'var(--gray-400)',lineHeight:'1.8'}}>
+                <div style={{color:'var(--gold)',fontWeight:700,marginBottom:'0.4rem',fontSize:'0.75rem',letterSpacing:'0.06em'}}>CRON SCHEDULE (UTC)</div>
+                <div>18:30 · 18:50 — after 12:00 ET kick-offs</div>
+                <div>21:30 · 21:50 — after 15:00 ET kick-offs</div>
+                <div>00:30 · 00:50 — after 18:00 ET kick-offs</div>
+                <div>03:30 · 03:50 — after 21:00 ET kick-offs</div>
+                <div style={{marginTop:'0.4rem',color:'var(--gray-500)'}}>+ safety catchall every 3 hours</div>
               </div>
-              {gbPick && (
-                <div style={{fontSize:'0.78rem',color:'#68d391',marginTop:'0.3rem'}}>Selected: <strong>{gbPick}</strong></div>
-              )}
-              {/* Dropdown portal — z-index 500 ensures it floats above everything */}
-              {gbOpen && (() => {
-                const players = [...ALL_PLAYERS].sort().filter(p => !gbSearch || p.toLowerCase().includes(gbSearch.toLowerCase()))
-                return players.length > 0 ? (
-                  <div style={{
-                    position:'absolute',top:'calc(100% + 4px)',left:0,right:0,
-                    background:'var(--gray-900)',border:'1px solid rgba(245,200,66,0.35)',
-                    borderRadius:'var(--radius)',maxHeight:'260px',overflowY:'auto',
-                    zIndex:500,boxShadow:'0 12px 40px rgba(0,0,0,0.7)'
-                  }}>
-                    {players.slice(0,80).map(p => (
-                      <div
-                        key={p}
-                        onMouseDown={e => { e.preventDefault(); setGbPick(p); setGbSearch(p); setGbOpen(false) }}
-                        style={{
-                          padding:'0.5rem 0.9rem',cursor:'pointer',fontSize:'0.875rem',
-                          color: gbPick===p ? 'var(--gold)' : 'var(--white)',
-                          background: gbPick===p ? 'rgba(245,200,66,0.1)' : 'transparent',
-                          borderBottom:'1px solid rgba(255,255,255,0.04)',
-                          display:'flex',justifyContent:'space-between',
-                        }}
-                        onMouseEnter={e => e.currentTarget.style.background='rgba(255,255,255,0.07)'}
-                        onMouseLeave={e => e.currentTarget.style.background = gbPick===p ? 'rgba(245,200,66,0.1)' : 'transparent'}
-                      >
-                        {p} {gbPick===p && <span style={{color:'var(--gold)'}}>✓</span>}
-                      </div>
-                    ))}
-                    {players.length > 80 && (
-                      <div style={{padding:'0.4rem 0.9rem',fontSize:'0.78rem',color:'var(--gray-500)',textAlign:'center'}}>
-                        Type more to narrow… ({players.length} results)
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div style={{position:'absolute',top:'calc(100% + 4px)',left:0,right:0,background:'var(--gray-900)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:'var(--radius)',padding:'0.6rem 0.9rem',fontSize:'0.85rem',color:'var(--gray-500)',zIndex:500}}>
-                    No players found for “{gbSearch}”
-                  </div>
-                )
-              })()}
-            </div>
-            <button
-              className="btn btn-primary"
-              onClick={awardGoldenBoot}
-              disabled={gbSaving || !gbPick}
-              style={{alignSelf:'flex-start'}}
-            >
-              {gbSaving ? 'Awarding…' : '🥇 Award +10 pts'}
-            </button>
-          </div>
-        </div>
 
-
-        {/* ── Stage tabs ────────────────────────────────────────────────── */}
-        <div style={{overflowX:'auto',marginBottom:'1.5rem'}}>
-          <div className="tabs" style={{flexWrap:'nowrap',minWidth:'max-content'}}>
-            {STAGE_ORDER.map(s => {
-              const cnt = matches.filter(m=>m.stage===s&&m.result===null).length
-              return (
+              <div style={{display:'flex',gap:'0.75rem',alignItems:'center',flexWrap:'wrap'}}>
                 <button
-                  key={s}
-                  className={`tab-btn ${activeStage===s?'active':''}`}
-                  onClick={()=>{ setActiveStage(s); setSelectedDay(null); setShowCompleted(false) }}
-                  style={{whiteSpace:'nowrap',fontSize:'0.78rem',padding:'0.4rem 0.6rem'}}
+                  className="btn btn-primary"
+                  onClick={triggerSync}
+                  disabled={syncing}
+                  style={{minWidth:'140px'}}
                 >
-                  {s} {cnt>0&&<span style={{background:'var(--danger)',color:'#fff',borderRadius:'99px',padding:'0 5px',fontSize:'0.68rem',marginLeft:'3px'}}>{cnt}</span>}
+                  {syncing ? '⟳ Syncing...' : '🔄 Sync Now'}
                 </button>
-              )
-            })}
-          </div>
-        </div>
-
-        {/* ── Day pills ─────────────────────────────────────────────────── */}
-        {stageDates.length > 0 && (
-          <div style={{overflowX:'auto',marginBottom:'1.5rem'}}>
-            <div style={{display:'flex',gap:'0.5rem',flexWrap:'nowrap',minWidth:'max-content'}}>
-              {stageDates.map(dateStr => {
-                const pendingCount = stageMatches.filter(m => m.match_date===dateStr && m.result===null).length
-                const allDone = pendingCount === 0
-                const isActive = activeDayDate === dateStr
-                return (
-                  <button
-                    key={dateStr}
-                    onClick={()=>{ setSelectedDay(dateStr); setShowCompleted(false) }}
-                    style={{
-                      padding:'0.4rem 0.9rem',
-                      borderRadius:'99px',
-                      border:'1px solid',
-                      borderColor: isActive ? 'var(--primary)' : allDone ? 'var(--gray-700)' : 'var(--gray-600)',
-                      background: isActive ? 'var(--primary)' : allDone ? 'var(--gray-800)' : 'transparent',
-                      color: isActive ? '#fff' : allDone ? 'var(--gray-500)' : 'var(--gray-300)',
-                      fontSize:'0.78rem',
-                      cursor:'pointer',
-                      whiteSpace:'nowrap',
-                      display:'flex',
-                      alignItems:'center',
-                      gap:'0.35rem',
-                      transition:'all 0.15s',
-                    }}
-                  >
-                    {allDone && <span style={{color:'#68d391',fontSize:'0.7rem'}}>✓</span>}
-                    {format(parseISO(dateStr),'EEE d MMM')}
-                    {!allDone && (
-                      <span style={{background:'var(--danger)',color:'#fff',borderRadius:'99px',padding:'0 4px',fontSize:'0.65rem'}}>{pendingCount}</span>
-                    )}
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* ── Selected day header ───────────────────────────────────────── */}
-        {activeDayDate && (
-          <h2 style={{fontFamily:'var(--font-display)',fontSize:'1.1rem',marginBottom:'1rem',color:'var(--white)'}}>
-            {dayLabel(activeDayDate)}
-            <span style={{fontWeight:400,color:'var(--gray-500)',fontSize:'0.85rem',marginLeft:'0.6rem'}}>
-              · {pendingOnDay.length} pending · {completedOnDay.length} done
-            </span>
-          </h2>
-        )}
-
-        {/* ── Pending matches on selected day ───────────────────────────── */}
-        {pendingOnDay.length === 0 && completedOnDay.length === 0 && (
-          <div className="card" style={{textAlign:'center',padding:'1.5rem',color:'var(--gray-500)'}}>
-            No matches scheduled for this stage yet.
-          </div>
-        )}
-
-        {pendingOnDay.length === 0 && completedOnDay.length > 0 && (
-          <div className="card" style={{textAlign:'center',padding:'1rem 1.5rem',color:'#68d391',marginBottom:'1rem',display:'flex',alignItems:'center',justifyContent:'center',gap:'0.5rem'}}>
-            <span style={{fontSize:'1.2rem'}}>✅</span>
-            All matches on this day are complete!
-          </div>
-        )}
-
-        <div style={{display:'flex',flexDirection:'column',gap:'0.75rem',marginBottom:'1.5rem'}}>
-          {pendingOnDay.map(match => {
-            const form = resultForm[match.id] || {}
-            const isKnockout = match.stage !== 'Group Stage'
-            const bothKnown = !['Winner','Runner','Best','Loser'].some(w => (match.team_a||'').includes(w) || (match.team_b||'').includes(w))
-            return (
-              <div key={match.id} className="card" style={{padding:'1rem 1.25rem',opacity: isKnockout && !bothKnown ? 0.55 : 1,border:'1px solid var(--gray-700)'}}>
-                {/* Match info row */}
-                <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:'0.5rem',flexWrap:'wrap',marginBottom:'0.75rem'}}>
-                  <div>
-                    <div style={{fontWeight:700,fontSize:'1rem',marginBottom:'0.2rem'}}>
-                      {match.team_a}
-                      <span style={{color:'var(--gray-500)',fontWeight:400,margin:'0 0.4rem'}}>vs</span>
-                      {match.team_b}
-                    </div>
-                    <div style={{fontSize:'0.75rem',color:'var(--gray-500)'}}>
-                      {match.match_time}
-                      {match.group_name ? ` · Group ${match.group_name}` : ''}
-                      {isKnockout && !bothKnown && (
-                        <span style={{color:'var(--gold)',marginLeft:'0.5rem'}}>⏳ Awaiting group results</span>
-                      )}
-                    </div>
-                  </div>
-                  <span style={{fontSize:'0.72rem',background:'var(--gray-800)',color:'var(--gray-400)',borderRadius:'4px',padding:'0.15rem 0.4rem',border:'1px solid var(--gray-700)',whiteSpace:'nowrap'}}>
-                    {match.stage}
+                <button
+                  className="btn"
+                  onClick={loadSyncLog}
+                  disabled={syncLogLoading}
+                  style={{background:'rgba(255,255,255,0.06)',border:'1px solid rgba(255,255,255,0.12)',color:'var(--gray-300)'}}
+                >
+                  {syncLogLoading ? 'Loading...' : 'Refresh Log'}
+                </button>
+                {lastSync && (
+                  <span style={{fontSize:'0.8rem',color:'var(--gray-500)'}}>
+                    Last run: {format(new Date(lastSync.ran_at), 'MMM d, HH:mm')} UTC
+                    · source: <strong style={{color:'var(--gray-300)'}}>{lastSync.source}</strong>
                   </span>
-                </div>
-
-                {/* Score entry */}
-                {bothKnown && (
-                  <div style={{display:'flex',alignItems:'center',gap:'0.6rem',flexWrap:'wrap'}}>
-                    <select
-                      className="form-select"
-                      style={{flex:'1 1 160px',minWidth:'140px'}}
-                      value={form.result||''}
-                      onChange={e=>handleResultInput(match.id,'result',e.target.value)}
-                    >
-                      <option value="">— Result —</option>
-                      <option value="teamA">{match.team_a} Win</option>
-                      {match.stage === 'Group Stage' && <option value="draw">Draw</option>}
-                      <option value="teamB">{match.team_b} Win</option>
-                    </select>
-
-                    <div style={{display:'flex',alignItems:'center',gap:'0.4rem'}}>
-                      <input
-                        className="form-input"
-                        style={{width:'64px',textAlign:'center'}}
-                        type="number" min="0"
-                        placeholder="A"
-                        value={form.scoreA??''}
-                        onChange={e=>handleResultInput(match.id,'scoreA',e.target.value)}
-                      />
-                      <span style={{color:'var(--gray-500)',fontWeight:700}}>–</span>
-                      <input
-                        className="form-input"
-                        style={{width:'64px',textAlign:'center'}}
-                        type="number" min="0"
-                        placeholder="B"
-                        value={form.scoreB??''}
-                        onChange={e=>handleResultInput(match.id,'scoreB',e.target.value)}
-                      />
-                    </div>
-
-                    <button
-                      className="btn btn-primary btn-sm"
-                      onClick={()=>saveResult(match)}
-                      disabled={saving[match.id]}
-                      style={{minWidth:'70px'}}
-                    >
-                      {saving[match.id] ? '...' : '✓ Save'}
-                    </button>
-                  </div>
                 )}
               </div>
-            )
-          })}
-        </div>
-
-        {/* ── Completed matches on selected day (collapsible) ───────────── */}
-        {completedOnDay.length > 0 && (
-          <div style={{marginBottom:'2rem'}}>
-            <button
-              onClick={()=>setShowCompleted(s=>!s)}
-              style={{
-                display:'flex',alignItems:'center',gap:'0.5rem',
-                background:'none',border:'none',cursor:'pointer',
-                color:'var(--gray-400)',fontSize:'0.85rem',
-                marginBottom:'0.5rem',padding:0,
-              }}
-            >
-              <span style={{
-                display:'inline-block',
-                transform: showCompleted ? 'rotate(90deg)' : 'rotate(0deg)',
-                transition:'transform 0.2s',
-                fontSize:'0.7rem',
-              }}>▶</span>
-              <span style={{fontFamily:'var(--font-display)',letterSpacing:'0.05em'}}>
-                COMPLETED ({completedOnDay.length})
-              </span>
-            </button>
-
-            {showCompleted && (
-              <div style={{display:'flex',flexDirection:'column',gap:'0.35rem'}}>
-                {completedOnDay.map(m => {
-                  const isEditing = editingMatch?.id === m.id
-                  const eform = resultForm[m.id] || {}
-                  return (
-                    <div
-                      key={m.id}
-                      className="card"
-                      style={{
-                        padding:'0.7rem 1.1rem',
-                        border: isEditing ? '1px solid var(--gold)' : '1px solid var(--gray-800)',
-                        background: isEditing ? 'rgba(245,200,66,0.05)' : undefined,
-                      }}
-                    >
-                      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:'0.5rem',marginBottom: isEditing ? '0.75rem' : 0}}>
-                        <div>
-                          <span style={{fontSize:'0.88rem',fontWeight:500}}>{m.team_a}</span>
-                          <span style={{color:'var(--gray-500)',margin:'0 0.4rem',fontSize:'0.8rem'}}>vs</span>
-                          <span style={{fontSize:'0.88rem',fontWeight:500}}>{m.team_b}</span>
-                          <span style={{fontSize:'0.73rem',color:'var(--gray-500)',marginLeft:'0.5rem'}}>{m.match_time}</span>
-                        </div>
-                        <div style={{display:'flex',alignItems:'center',gap:'0.5rem'}}>
-                          <span className="match-result-badge">{m.score_a}–{m.score_b}</span>
-                          {!isEditing && (
-                            <button
-                              className="btn btn-ghost btn-sm"
-                              onClick={() => {
-                                setEditingMatch(m)
-                                setResultForm(prev => ({
-                                  ...prev,
-                                  [m.id]: {
-                                    result: m.result,
-                                    scoreA: String(m.score_a),
-                                    scoreB: String(m.score_b),
-                                  }
-                                }))
-                                setShowCompleted(true)
-                              }}
-                              style={{fontSize:'0.72rem',padding:'0.2rem 0.5rem'}}
-                            >
-                              ✏️ Edit
-                            </button>
-                          )}
-                          {isEditing && (
-                            <button
-                              className="btn btn-ghost btn-sm"
-                              onClick={() => setEditingMatch(null)}
-                              style={{fontSize:'0.72rem',padding:'0.2rem 0.5rem',color:'var(--gray-500)'}}
-                            >
-                              Cancel
-                            </button>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Inline edit form */}
-                      {isEditing && (
-                        <div style={{display:'flex',alignItems:'center',gap:'0.6rem',flexWrap:'wrap'}}>
-                          <select
-                            className="form-select"
-                            style={{flex:'1 1 160px',minWidth:'140px'}}
-                            value={eform.result||''}
-                            onChange={e=>handleResultInput(m.id,'result',e.target.value)}
-                          >
-                            <option value="">— Result —</option>
-                            <option value="teamA">{m.team_a} Win</option>
-                            {m.stage==='Group Stage' && <option value="draw">Draw</option>}
-                            <option value="teamB">{m.team_b} Win</option>
-                          </select>
-                          <div style={{display:'flex',alignItems:'center',gap:'0.4rem'}}>
-                            <input
-                              className="form-input"
-                              style={{width:'60px',textAlign:'center'}}
-                              type="number" min="0"
-                              placeholder="A"
-                              value={eform.scoreA??''}
-                              onChange={e=>handleResultInput(m.id,'scoreA',e.target.value)}
-                            />
-                            <span style={{color:'var(--gray-500)',fontWeight:700}}>–</span>
-                            <input
-                              className="form-input"
-                              style={{width:'60px',textAlign:'center'}}
-                              type="number" min="0"
-                              placeholder="B"
-                              value={eform.scoreB??''}
-                              onChange={e=>handleResultInput(m.id,'scoreB',e.target.value)}
-                            />
-                          </div>
-                          <button
-                            className="btn btn-primary btn-sm"
-                            style={{minWidth:'80px'}}
-                            disabled={saving[m.id]}
-                            onClick={async () => {
-                              await saveResult(m, true)
-                              setEditingMatch(null)
-                            }}
-                          >
-                            {saving[m.id] ? '...' : '✓ Update'}
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ── Group Standings (Group Stage only) ────────────────────────── */}
-        {activeStage === 'Group Stage' && (
-          <>
-            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'1rem',flexWrap:'wrap',gap:'0.5rem'}}>
-              <h2 style={{fontFamily:'var(--font-display)',fontSize:'1.2rem',color:'var(--white)'}}>GROUP STANDINGS</h2>
-              <button className="btn btn-ghost btn-sm" onClick={()=>setShowStandings(s=>!s)}>
-                {showStandings ? 'Hide' : 'Show'} Standings
-              </button>
             </div>
-            {showStandings && (
-              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(300px,1fr))',gap:'1rem',marginBottom:'2rem'}}>
-                {groups.map(g => (
-                  <div key={g} className="card" style={{padding:'1rem'}}>
-                    <div style={{fontFamily:'var(--font-display)',fontSize:'1rem',color:'var(--gold)',marginBottom:'0.6rem',letterSpacing:'0.05em'}}>GROUP {g}</div>
-                    <table style={{width:'100%',fontSize:'0.78rem'}}>
-                      <thead>
-                        <tr>
-                          <th style={{textAlign:'left',paddingBottom:'4px',color:'var(--gray-500)',fontWeight:600}}>Team</th>
-                          <th style={{textAlign:'center',paddingBottom:'4px',color:'var(--gray-500)',fontWeight:600}}>P</th>
-                          <th style={{textAlign:'center',paddingBottom:'4px',color:'var(--gray-500)',fontWeight:600}}>W</th>
-                          <th style={{textAlign:'center',paddingBottom:'4px',color:'var(--gray-500)',fontWeight:600}}>D</th>
-                          <th style={{textAlign:'center',paddingBottom:'4px',color:'var(--gray-500)',fontWeight:600}}>L</th>
-                          <th style={{textAlign:'center',paddingBottom:'4px',color:'var(--gray-500)',fontWeight:600}}>GD</th>
-                          <th style={{textAlign:'center',paddingBottom:'4px',color:'var(--gold)',fontWeight:700}}>Pts</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(standingsByGroup[g] || []).map((row, i) => (
-                          <tr key={row.team}>
-                            <td style={{color: i < 2 ? 'var(--white)' : i === 2 ? '#f6ad55' : 'var(--gray-500)', fontWeight: i < 2 ? 600 : 400, paddingTop:'3px'}}>
-                              {i===0?'🥇':i===1?'🥈':i===2?'🟡':''} {row.team}
-                            </td>
-                            <td style={{textAlign:'center',color:'var(--gray-500)'}}>{row.played}</td>
-                            <td style={{textAlign:'center'}}>{row.won}</td>
-                            <td style={{textAlign:'center'}}>{row.drawn}</td>
-                            <td style={{textAlign:'center'}}>{row.lost}</td>
-                            <td style={{textAlign:'center',color: (row.goals_for-row.goals_against)>0?'#68d391':(row.goals_for-row.goals_against)<0?'#fc8181':'var(--gray-300)'}}>
-                              {row.goals_for-row.goals_against>0?'+':''}{row.goals_for-row.goals_against}
-                            </td>
-                            <td style={{textAlign:'center',fontWeight:700,color:'var(--gold)'}}>{row.points}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+
+            {/* Sync log table */}
+            <h3 style={{fontFamily:'var(--font-display)',fontSize:'1.1rem',marginBottom:'0.75rem',color:'var(--white)'}}>
+              RECENT SYNC RUNS
+            </h3>
+            {syncLog.length === 0 ? (
+              <div className="card" style={{textAlign:'center',padding:'2rem',color:'var(--gray-500)'}}>
+                No sync runs yet. Cron will start once deployed.
+              </div>
+            ) : (
+              <div style={{display:'flex',flexDirection:'column',gap:'0.4rem'}}>
+                {/* Header */}
+                <div style={{display:'grid',gridTemplateColumns:'1fr 60px 60px 60px 80px',gap:'0.5rem',padding:'0.4rem 1rem',fontSize:'0.72rem',color:'var(--gray-500)',textTransform:'uppercase',letterSpacing:'0.06em'}}>
+                  <span>Time</span><span>Checked</span><span>Updated</span><span>Source</span><span>Status</span>
+                </div>
+                {syncLog.map(row => (
+                  <div key={row.id} className="card" style={{padding:'0.6rem 1rem',display:'grid',gridTemplateColumns:'1fr 60px 60px 60px 80px',gap:'0.5rem',alignItems:'center'}}>
+                    <span style={{fontSize:'0.82rem',color:'var(--gray-300)'}}>
+                      {format(new Date(row.ran_at), 'MMM d, HH:mm')}
+                      <span style={{color:'var(--gray-500)',fontSize:'0.75rem'}}> · {formatDistanceToNow(new Date(row.ran_at), { addSuffix: true })}</span>
+                    </span>
+                    <span style={{fontSize:'0.82rem',textAlign:'center',color:'var(--gray-400)'}}>{row.matches_checked}</span>
+                    <span style={{fontSize:'0.82rem',textAlign:'center',color: row.matches_updated > 0 ? 'var(--success)' : 'var(--gray-500)',fontWeight: row.matches_updated > 0 ? 700 : 400}}>
+                      {row.matches_updated > 0 ? `+${row.matches_updated}` : '—'}
+                    </span>
+                    <span style={{fontSize:'0.75rem',color:'var(--gray-500)'}}>{row.source}</span>
+                    <span style={{fontSize:'0.75rem'}}>
+                      {row.errors
+                        ? <span style={{color:'var(--danger)'}}>⚠ Error</span>
+                        : <span style={{color:'var(--success)'}}>✓ OK</span>
+                      }
+                    </span>
                   </div>
                 ))}
               </div>
             )}
+          </div>
+        )}
+
+        {/* ── GOLDEN BOOT TAB ───────────────────────────────────────────── */}
+        {activeTab === 'gb' && (
+          <div className="card-gold">
+            <h2 style={{fontFamily:'var(--font-display)',fontSize:'1.3rem',color:'var(--gold)',marginBottom:'0.5rem'}}>🥇 AWARD GOLDEN BOOT</h2>
+            <p style={{fontSize:'0.82rem',color:'var(--gray-500)',marginBottom:'0.9rem'}}>End of tournament only. Users who picked this player get +10 pts.</p>
+
+            {gbAwardedName ? (
+              <div style={{display:'flex',alignItems:'center',gap:'0.75rem',flexWrap:'wrap'}}>
+                <div style={{fontSize:'0.95rem',color:'var(--white)'}}>
+                  Awarded to: <strong style={{color:'var(--gold)'}}>{gbAwardedName}</strong>
+                </div>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  disabled={gbSaving}
+                  onClick={resetGoldenBoot}
+                  style={{fontSize:'0.78rem',padding:'0.3rem 0.7rem',color:'var(--danger,#e74c3c)'}}
+                >
+                  {gbSaving ? '...' : '🔄 Reset'}
+                </button>
+              </div>
+            ) : (
+              <div style={{display:'flex',flexDirection:'column',gap:'0.75rem'}}>
+                <div style={{position:'relative'}}>
+                  <label className="form-label">Search Golden Boot Winner</label>
+                  <div style={{position:'relative'}}>
+                    <input
+                      className="form-input"
+                      placeholder="Type player name to search..."
+                      value={gbSearch}
+                      onChange={e => { setGbSearch(e.target.value); setGbPick(''); setGbOpen(true) }}
+                      onFocus={() => setGbOpen(true)}
+                      onBlur={() => setTimeout(() => setGbOpen(false), 200)}
+                      style={{paddingRight: gbPick ? '2.2rem' : '0.9rem'}}
+                    />
+                    {gbPick && <span style={{position:'absolute',right:'0.7rem',top:'50%',transform:'translateY(-50%)',color:'#68d391',fontSize:'1rem'}}>✓</span>}
+                  </div>
+                  {gbPick && (
+                    <div style={{fontSize:'0.78rem',color:'#68d391',marginTop:'0.3rem'}}>Selected: <strong>{gbPick}</strong></div>
+                  )}
+                  {/* Dropdown portal — z-index 500 ensures it floats above everything */}
+                  {gbOpen && (() => {
+                    const players = [...ALL_PLAYERS].sort().filter(p => !gbSearch || p.toLowerCase().includes(gbSearch.toLowerCase()))
+                    return players.length > 0 ? (
+                      <div style={{
+                        position:'absolute',top:'calc(100% + 4px)',left:0,right:0,
+                        background:'var(--gray-900)',border:'1px solid rgba(245,200,66,0.35)',
+                        borderRadius:'var(--radius)',maxHeight:'260px',overflowY:'auto',
+                        zIndex:500,boxShadow:'0 12px 40px rgba(0,0,0,0.7)'
+                      }}>
+                        {players.slice(0,80).map(p => (
+                          <div
+                            key={p}
+                            onMouseDown={e => { e.preventDefault(); setGbPick(p); setGbSearch(p); setGbOpen(false) }}
+                            style={{
+                              padding:'0.5rem 0.9rem',cursor:'pointer',fontSize:'0.875rem',
+                              color: gbPick===p ? 'var(--gold)' : 'var(--white)',
+                              background: gbPick===p ? 'rgba(245,200,66,0.1)' : 'transparent',
+                              borderBottom:'1px solid rgba(255,255,255,0.04)',
+                              display:'flex',justifyContent:'space-between',
+                            }}
+                            onMouseEnter={e => e.currentTarget.style.background='rgba(255,255,255,0.07)'}
+                            onMouseLeave={e => e.currentTarget.style.background = gbPick===p ? 'rgba(245,200,66,0.1)' : 'transparent'}
+                          >
+                            {p} {gbPick===p && <span style={{color:'var(--gold)'}}>✓</span>}
+                          </div>
+                        ))}
+                        {players.length > 80 && (
+                          <div style={{padding:'0.4rem 0.9rem',fontSize:'0.78rem',color:'var(--gray-500)',textAlign:'center'}}>
+                            Type more to narrow… ({players.length} results)
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div style={{position:'absolute',top:'calc(100% + 4px)',left:0,right:0,background:'var(--gray-900)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:'var(--radius)',padding:'0.6rem 0.9rem',fontSize:'0.85rem',color:'var(--gray-500)',zIndex:500}}>
+                        No players found for "{gbSearch}"
+                      </div>
+                    )
+                  })()}
+                </div>
+                <button
+                  className="btn btn-primary"
+                  onClick={awardGoldenBoot}
+                  disabled={gbSaving || !gbPick}
+                  style={{alignSelf:'flex-start'}}
+                >
+                  {gbSaving ? 'Awarding…' : '🥇 Award +10 pts'}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── RESULTS TAB ───────────────────────────────────────────────── */}
+        {activeTab === 'results' && (
+          <>
+            {/* ── Stage dropdown ──────────────────────────────────────────────── */}
+            <div style={{marginBottom:'1.5rem'}}>
+              <select
+                className="form-select"
+                value={activeStage}
+                onChange={(e)=>{ setActiveStage(e.target.value); setSelectedDay(null); setShowCompleted(false) }}
+                style={{fontSize:'0.85rem'}}
+              >
+                {STAGE_ORDER.map(s => {
+                  const cnt = matches.filter(m=>m.stage===s&&m.result===null).length
+                  return <option key={s} value={s}>{s}{cnt > 0 ? ` (${cnt} pending)` : ''}</option>
+                })}
+              </select>
+            </div>
+
+            {/* ── Day pills ─────────────────────────────────────────────────── */}
+            {stageDates.length > 0 && (
+              <div style={{marginBottom:'1.5rem'}}>
+                <div ref={dayScrollRef} className="scroll-row">
+                  {stageDates.map(dateStr => {
+                    const pendingCount = stageMatches.filter(m => m.match_date===dateStr && m.result===null).length
+                    const allDone = pendingCount === 0
+                    const isActive = activeDayDate === dateStr
+                    return (
+                      <button
+                        key={dateStr}
+                        ref={isActive ? dayPillRef : null}
+                        onClick={()=>{ setSelectedDay(dateStr); setShowCompleted(false) }}
+                        style={{
+                          padding:'0.4rem 0.85rem',
+                          borderRadius:'99px',
+                          border: isActive ? '1.5px solid var(--gold)' : '1px solid rgba(255,255,255,0.12)',
+                          background: isActive ? 'rgba(245,200,66,0.12)' : 'transparent',
+                          color: isActive ? 'var(--gold)' : 'var(--gray-300)',
+                          fontSize:'0.82rem',
+                          fontWeight: isActive ? 700 : 400,
+                          cursor:'pointer',
+                          whiteSpace:'nowrap',
+                          display:'flex',
+                          alignItems:'center',
+                          gap:'5px',
+                        }}
+                      >
+                        {format(parseISO(dateStr),'EEE, MMM d')}
+                        {allDone
+                          ? <span style={{fontSize:'0.85rem',color:'var(--success)'}}>✅</span>
+                          : <span style={{fontSize:'0.7rem',borderRadius:'99px',padding:'1px 6px',background:'rgba(255,255,255,0.08)',color:'var(--gray-500)'}}>{pendingCount}</span>
+                        }
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* ── Selected day header ───────────────────────────────────────── */}
+            {activeDayDate && (
+              <h2 style={{fontFamily:'var(--font-display)',fontSize:'1.1rem',marginBottom:'1rem',color:'var(--white)'}}>
+                {dayLabel(activeDayDate)}
+                <span style={{fontWeight:400,color:'var(--gray-500)',fontSize:'0.85rem',marginLeft:'0.6rem'}}>
+                  · {pendingOnDay.length} pending · {completedOnDay.length} done
+                </span>
+              </h2>
+            )}
+
+            {/* ── Pending matches on selected day ───────────────────────────── */}
+            {pendingOnDay.length === 0 && completedOnDay.length === 0 && (
+              <div className="card" style={{textAlign:'center',padding:'1.5rem',color:'var(--gray-500)'}}>
+                No matches scheduled for this stage yet.
+              </div>
+            )}
+
+            {pendingOnDay.length === 0 && completedOnDay.length > 0 && (
+              <div className="card" style={{textAlign:'center',padding:'1rem 1.5rem',color:'#68d391',marginBottom:'1rem',display:'flex',alignItems:'center',justifyContent:'center',gap:'0.5rem'}}>
+                <span style={{fontSize:'1.2rem'}}>✅</span>
+                All matches on this day are complete!
+              </div>
+            )}
+
+            <div style={{display:'flex',flexDirection:'column',gap:'0.75rem',marginBottom:'1.5rem'}}>
+              {pendingOnDay.map(match => {
+                const form = resultForm[match.id] || {}
+                const isKnockout = match.stage !== 'Group Stage'
+                const bothKnown = !['Winner','Runner','Best','Loser'].some(w => (match.team_a||'').includes(w) || (match.team_b||'').includes(w))
+                return (
+                  <div key={match.id} className="card" style={{padding:'1rem 1.25rem',opacity: isKnockout && !bothKnown ? 0.55 : 1,border:'1px solid var(--gray-700)'}}>
+                    {/* Match info row */}
+                    <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:'0.5rem',flexWrap:'wrap',marginBottom:'0.75rem'}}>
+                      <div>
+                        <div style={{fontWeight:700,fontSize:'1rem',marginBottom:'0.2rem',display:'flex',alignItems:'center',gap:'6px',flexWrap:'wrap'}}>
+                          <span style={{display:'inline-flex',alignItems:'center',gap:'6px'}}><FlagImg team={match.team_a} size={20} />{match.team_a}</span>
+                          <span style={{color:'var(--gray-500)',fontWeight:400}}>vs</span>
+                          <span style={{display:'inline-flex',alignItems:'center',gap:'6px'}}><FlagImg team={match.team_b} size={20} />{match.team_b}</span>
+                        </div>
+                        <div style={{fontSize:'0.75rem',color:'var(--gray-500)'}}>
+                          {toIST(match.match_time)}
+                          {match.group_name ? ` · Group ${match.group_name}` : ''}
+                          {isKnockout && !bothKnown && (
+                            <span style={{color:'var(--gold)',marginLeft:'0.5rem'}}>⏳ Awaiting group results</span>
+                          )}
+                        </div>
+                      </div>
+                      <span style={{fontSize:'0.72rem',background:'var(--gray-800)',color:'var(--gray-400)',borderRadius:'4px',padding:'0.15rem 0.4rem',border:'1px solid var(--gray-700)',whiteSpace:'nowrap'}}>
+                        {match.stage}
+                      </span>
+                    </div>
+
+                    {/* Score entry */}
+                    {bothKnown && (
+                      <div style={{display:'flex',alignItems:'center',gap:'0.6rem',flexWrap:'wrap'}}>
+                        <select
+                          className="form-select"
+                          style={{flex:'1 1 160px',minWidth:'140px'}}
+                          value={form.result||''}
+                          onChange={e=>handleResultInput(match.id,'result',e.target.value)}
+                        >
+                          <option value="">— Result —</option>
+                          <option value="teamA">{match.team_a} Win</option>
+                          {match.stage === 'Group Stage' && <option value="draw">Draw</option>}
+                          <option value="teamB">{match.team_b} Win</option>
+                        </select>
+
+                        <div style={{display:'flex',alignItems:'center',gap:'0.4rem'}}>
+                          <input
+                            className="form-input"
+                            style={{width:'64px',textAlign:'center'}}
+                            type="number" min="0"
+                            placeholder="A"
+                            value={form.scoreA??''}
+                            onChange={e=>handleResultInput(match.id,'scoreA',e.target.value)}
+                          />
+                          <span style={{color:'var(--gray-500)',fontWeight:700}}>–</span>
+                          <input
+                            className="form-input"
+                            style={{width:'64px',textAlign:'center'}}
+                            type="number" min="0"
+                            placeholder="B"
+                            value={form.scoreB??''}
+                            onChange={e=>handleResultInput(match.id,'scoreB',e.target.value)}
+                          />
+                        </div>
+
+                        <button
+                          className="btn btn-primary btn-sm"
+                          onClick={()=>saveResult(match)}
+                          disabled={saving[match.id]}
+                          style={{minWidth:'70px'}}
+                        >
+                          {saving[match.id] ? '...' : '✓ Save'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* ── Completed matches on selected day (collapsible) ───────────── */}
+            {completedOnDay.length > 0 && (
+              <div style={{marginBottom:'2rem'}}>
+                <button
+                  onClick={()=>setShowCompleted(s=>!s)}
+                  style={{
+                    display:'flex',alignItems:'center',gap:'0.5rem',
+                    background:'none',border:'none',cursor:'pointer',
+                    color:'var(--gray-400)',fontSize:'0.85rem',
+                    marginBottom:'0.5rem',padding:0,
+                  }}
+                >
+                  <span style={{
+                    display:'inline-block',
+                    transform: showCompleted ? 'rotate(90deg)' : 'rotate(0deg)',
+                    transition:'transform 0.2s',
+                    fontSize:'0.7rem',
+                  }}>▶</span>
+                  <span style={{fontFamily:'var(--font-display)',letterSpacing:'0.05em'}}>
+                    COMPLETED ({completedOnDay.length})
+                  </span>
+                </button>
+
+                {showCompleted && (
+                  <div style={{display:'flex',flexDirection:'column',gap:'0.35rem'}}>
+                    {completedOnDay.map(m => {
+                      const isEditing = editingMatch?.id === m.id
+                      const eform = resultForm[m.id] || {}
+                      return (
+                        <div
+                          key={m.id}
+                          className="card"
+                          style={{
+                            padding:'0.7rem 1.1rem',
+                            border: isEditing ? '1px solid var(--gold)' : '1px solid var(--gray-800)',
+                            background: isEditing ? 'rgba(245,200,66,0.05)' : undefined,
+                          }}
+                        >
+                          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:'0.5rem',marginBottom: isEditing ? '0.75rem' : 0}}>
+                            <div style={{display:'flex',alignItems:'center',gap:'6px'}}>
+                              <span style={{display:'inline-flex',alignItems:'center',gap:'4px',fontSize:'0.88rem',fontWeight:500}}><FlagImg team={m.team_a} size={18} />{m.team_a}</span>
+                              <span style={{color:'var(--gray-500)',fontSize:'0.8rem'}}>vs</span>
+                              <span style={{display:'inline-flex',alignItems:'center',gap:'4px',fontSize:'0.88rem',fontWeight:500}}><FlagImg team={m.team_b} size={18} />{m.team_b}</span>
+                              <span style={{fontSize:'0.73rem',color:'var(--gray-500)',marginLeft:'0.5rem'}}>{toIST(m.match_time)}</span>
+                            </div>
+                            <div style={{display:'flex',alignItems:'center',gap:'0.5rem'}}>
+                              <span className="match-result-badge">{m.score_a}–{m.score_b}</span>
+                              {!isEditing && (
+                                <>
+                                  <button
+                                    className="btn btn-ghost btn-sm"
+                                    onClick={() => {
+                                      setEditingMatch(m)
+                                      setResultForm(prev => ({
+                                        ...prev,
+                                        [m.id]: {
+                                          result: m.result,
+                                          scoreA: String(m.score_a),
+                                          scoreB: String(m.score_b),
+                                        }
+                                      }))
+                                      setShowCompleted(true)
+                                    }}
+                                    style={{fontSize:'0.72rem',padding:'0.2rem 0.5rem'}}
+                                  >
+                                    ✏️ Edit
+                                  </button>
+                                  <button
+                                    className="btn btn-ghost btn-sm"
+                                    disabled={saving[m.id]}
+                                    onClick={() => resetResult(m)}
+                                    style={{fontSize:'0.72rem',padding:'0.2rem 0.5rem',color:'var(--danger,#e74c3c)'}}
+                                  >
+                                    {saving[m.id] ? '...' : '🔄 Reset'}
+                                  </button>
+                                </>
+                              )}
+                              {isEditing && (
+                                <button
+                                  className="btn btn-ghost btn-sm"
+                                  onClick={() => setEditingMatch(null)}
+                                  style={{fontSize:'0.72rem',padding:'0.2rem 0.5rem',color:'var(--gray-500)'}}
+                                >
+                                  Cancel
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Inline edit form */}
+                          {isEditing && (
+                            <div style={{display:'flex',alignItems:'center',gap:'0.6rem',flexWrap:'wrap'}}>
+                              <select
+                                className="form-select"
+                                style={{flex:'1 1 160px',minWidth:'140px'}}
+                                value={eform.result||''}
+                                onChange={e=>handleResultInput(m.id,'result',e.target.value)}
+                              >
+                                <option value="">— Result —</option>
+                                <option value="teamA">{m.team_a} Win</option>
+                                {m.stage==='Group Stage' && <option value="draw">Draw</option>}
+                                <option value="teamB">{m.team_b} Win</option>
+                              </select>
+                              <div style={{display:'flex',alignItems:'center',gap:'0.4rem'}}>
+                                <input
+                                  className="form-input"
+                                  style={{width:'60px',textAlign:'center'}}
+                                  type="number" min="0"
+                                  placeholder="A"
+                                  value={eform.scoreA??''}
+                                  onChange={e=>handleResultInput(m.id,'scoreA',e.target.value)}
+                                />
+                                <span style={{color:'var(--gray-500)',fontWeight:700}}>–</span>
+                                <input
+                                  className="form-input"
+                                  style={{width:'60px',textAlign:'center'}}
+                                  type="number" min="0"
+                                  placeholder="B"
+                                  value={eform.scoreB??''}
+                                  onChange={e=>handleResultInput(m.id,'scoreB',e.target.value)}
+                                />
+                              </div>
+                              <button
+                                className="btn btn-primary btn-sm"
+                                style={{minWidth:'80px'}}
+                                disabled={saving[m.id]}
+                                onClick={async () => {
+                                  await saveResult(m, true)
+                                  setEditingMatch(null)
+                                }}
+                              >
+                                {saving[m.id] ? '...' : '✓ Update'}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── Group Standings (Group Stage only) ────────────────────────── */}
+            {activeStage === 'Group Stage' && (
+              <>
+                <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'1rem',flexWrap:'wrap',gap:'0.5rem'}}>
+                  <h2 style={{fontFamily:'var(--font-display)',fontSize:'1.2rem',color:'var(--white)'}}>GROUP STANDINGS</h2>
+                  <button className="btn btn-ghost btn-sm" onClick={()=>setShowStandings(s=>!s)}>
+                    {showStandings ? 'Hide' : 'Show'} Standings
+                  </button>
+                </div>
+                {showStandings && (
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(300px,1fr))',gap:'1rem',marginBottom:'2rem'}}>
+                    {groups.map(g => (
+                      <div key={g} className="card" style={{padding:'1rem'}}>
+                        <div style={{fontFamily:'var(--font-display)',fontSize:'1rem',color:'var(--gold)',marginBottom:'0.6rem',letterSpacing:'0.05em'}}>GROUP {g}</div>
+                        <table style={{width:'100%',fontSize:'0.78rem'}}>
+                          <thead>
+                            <tr>
+                              <th style={{textAlign:'left',paddingBottom:'4px',color:'var(--gray-500)',fontWeight:600}}>Team</th>
+                              <th style={{textAlign:'center',paddingBottom:'4px',color:'var(--gray-500)',fontWeight:600}}>P</th>
+                              <th style={{textAlign:'center',paddingBottom:'4px',color:'var(--gray-500)',fontWeight:600}}>W</th>
+                              <th style={{textAlign:'center',paddingBottom:'4px',color:'var(--gray-500)',fontWeight:600}}>D</th>
+                              <th style={{textAlign:'center',paddingBottom:'4px',color:'var(--gray-500)',fontWeight:600}}>L</th>
+                              <th style={{textAlign:'center',paddingBottom:'4px',color:'var(--gray-500)',fontWeight:600}}>GD</th>
+                              <th style={{textAlign:'center',paddingBottom:'4px',color:'var(--gold)',fontWeight:700}}>Pts</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(standingsByGroup[g] || []).map((row, i) => (
+                              <tr key={row.team}>
+                                <td style={{color: i < 2 ? 'var(--white)' : i === 2 ? '#f6ad55' : 'var(--gray-500)', fontWeight: i < 2 ? 600 : 400, paddingTop:'3px'}}>
+                                  {i===0?'🥇':i===1?'🥈':i===2?'🟡':''} {row.team}
+                                </td>
+                                <td style={{textAlign:'center',color:'var(--gray-500)'}}>{row.played}</td>
+                                <td style={{textAlign:'center'}}>{row.won}</td>
+                                <td style={{textAlign:'center'}}>{row.drawn}</td>
+                                <td style={{textAlign:'center'}}>{row.lost}</td>
+                                <td style={{textAlign:'center',color: (row.goals_for-row.goals_against)>0?'#68d391':(row.goals_for-row.goals_against)<0?'#fc8181':'var(--gray-300)'}}>
+                                  {row.goals_for-row.goals_against>0?'+':''}{row.goals_for-row.goals_against}
+                                </td>
+                                <td style={{textAlign:'center',fontWeight:700,color:'var(--gold)'}}>{row.points}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
           </>
         )}
+
+        {/* ── OTHERS' PICKS TAB ────────────────────────────────────────────── */}
+        {activeTab === 'others' && (() => {
+          const byDate = {}
+          matches.forEach(m => {
+            if (!byDate[m.match_date]) byDate[m.match_date] = []
+            byDate[m.match_date].push(m)
+          })
+          const dates = Object.keys(byDate).sort()
+
+          function getOthersPred(userId, matchId) {
+            return allPredictions.find(p => p.user_id === userId && p.match_id === matchId)
+          }
+          function displayName(p) {
+            if (p.first_name && p.last_name) return `${p.first_name} ${p.last_name}`
+            return p.username || 'Unknown'
+          }
+          function getResultLabel(result, teamA, teamB) {
+            if (result === 'teamA') return `${teamA} Win`
+            if (result === 'teamB') return `${teamB} Win`
+            if (result === 'draw') return 'Draw'
+            return ''
+          }
+
+          // ── Match detail view
+          if (othersSelectedMatch) {
+            const match = othersSelectedMatch
+            const isCompleted = match.result !== null
+            const ordered = [...othersProfiles].sort((a, b) => displayName(a).localeCompare(displayName(b)))
+            return (
+              <div>
+                <div style={{display:'flex',alignItems:'center',gap:'0.5rem',marginBottom:'1.25rem',fontSize:'0.875rem',color:'var(--gray-500)'}}>
+                  <button onClick={() => { setOthersSelectedMatch(null) }} style={{background:'none',border:'none',color:'var(--gray-500)',cursor:'pointer',padding:0}}>Others' Picks</button>
+                  <span>›</span>
+                  <button onClick={() => { setOthersSelectedMatch(null) }} style={{background:'none',border:'none',color:'var(--gray-500)',cursor:'pointer',padding:0}}>
+                    {format(parseISO(match.match_date),'EEE, MMM d')}
+                  </button>
+                  <span>›</span>
+                  <span style={{color:'var(--white)'}}>{match.team_a} vs {match.team_b}</span>
+                </div>
+
+                <div className="card" style={{padding:'1rem 1.25rem',marginBottom:'1.25rem'}}>
+                  <div style={{display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap',marginBottom:'0.4rem'}}>
+                    <span style={{display:'flex',alignItems:'center',gap:'6px',fontFamily:'var(--font-display)',fontSize:'1.3rem',color:'var(--white)'}}>
+                      <FlagImg team={match.team_a} size={24}/>{match.team_a}
+                    </span>
+                    <span style={{color:'var(--gray-500)',fontSize:'0.9rem'}}>vs</span>
+                    <span style={{display:'flex',alignItems:'center',gap:'6px',fontFamily:'var(--font-display)',fontSize:'1.3rem',color:'var(--white)'}}>
+                      <FlagImg team={match.team_b} size={24}/>{match.team_b}
+                    </span>
+                    {isCompleted && <span className="match-result-badge" style={{marginLeft:'0.5rem'}}>{match.score_a}–{match.score_b}</span>}
+                  </div>
+                  <div style={{fontSize:'0.78rem',color:'var(--gray-500)'}}>
+                    {toIST(match.match_time)}{match.group_name ? ` · Group ${match.group_name}` : ''} · {match.stage}
+                  </div>
+                </div>
+
+                <h2 style={{fontFamily:'var(--font-display)',fontSize:'1.2rem',color:'var(--white)',marginBottom:'0.9rem'}}>
+                  ALL PREDICTIONS ({ordered.filter(p => getOthersPred(p.id, match.id)).length}/{ordered.length})
+                </h2>
+                <div style={{display:'flex',flexDirection:'column',gap:'0.5rem'}}>
+                  {ordered.map(p => {
+                    const pred = getOthersPred(p.id, match.id)
+                    const isCorrectResult = pred?.is_result_correct
+                    const isCorrectScore = pred?.is_score_correct
+                    return (
+                      <div key={p.id} style={{
+                        display:'flex',alignItems:'center',justifyContent:'space-between',
+                        padding:'0.8rem 1.1rem',
+                        background:'rgba(30,30,26,0.9)',
+                        border:'1px solid rgba(255,255,255,0.07)',
+                        borderRadius:'var(--radius-lg)',
+                        flexWrap:'wrap',gap:'0.5rem',
+                      }}>
+                        <div style={{display:'flex',alignItems:'center',gap:'0.55rem',minWidth:'130px'}}>
+                          <span style={{fontSize:'1rem'}}>👤</span>
+                          <span style={{fontWeight:500,color:'var(--white)',fontSize:'0.9rem'}}>{displayName(p)}</span>
+                        </div>
+                        {pred ? (
+                          <div style={{display:'flex',alignItems:'center',gap:'0.75rem',flexWrap:'wrap'}}>
+                            <div style={{display:'flex',alignItems:'center',gap:'5px'}}>
+                              <FlagImg team={pred.predicted_result==='teamA'?match.team_a:pred.predicted_result==='teamB'?match.team_b:null} size={16}/>
+                              <span style={{fontSize:'0.875rem',color:'var(--white)',fontWeight:500}}>{getResultLabel(pred.predicted_result,match.team_a,match.team_b)}</span>
+                            </div>
+                            <span style={{fontFamily:'var(--font-display)',fontSize:'1.05rem',color:'var(--white)',letterSpacing:'0.04em'}}>
+                              {pred.predicted_score_a}–{pred.predicted_score_b}
+                            </span>
+                            {isCompleted && (
+                              isCorrectScore
+                                ? <span className="points-chip points-5">+5 pts ⚡</span>
+                                : isCorrectResult
+                                  ? <span className="points-chip points-3">+3 pts ✓</span>
+                                  : <span className="points-chip points-0">0 pts</span>
+                            )}
+                          </div>
+                        ) : (
+                          <span style={{color:'var(--gray-500)',fontSize:'0.875rem',fontStyle:'italic'}}>No prediction</span>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )
+          }
+
+          // ── Date detail view
+          if (othersSelectedDate) {
+            const dayMatches = byDate[othersSelectedDate] || []
+            return (
+              <div>
+                <div style={{display:'flex',alignItems:'center',gap:'0.5rem',marginBottom:'1.25rem',fontSize:'0.875rem',color:'var(--gray-500)'}}>
+                  <button onClick={() => setOthersSelectedDate(null)} style={{background:'none',border:'none',color:'var(--gray-500)',cursor:'pointer',padding:0}}>Others' Picks</button>
+                  <span>›</span>
+                  <span style={{color:'var(--white)'}}>{format(parseISO(othersSelectedDate),'EEEE, MMMM d yyyy')}</span>
+                </div>
+                <h2 style={{fontFamily:'var(--font-display)',fontSize:'1.4rem',color:'var(--white)',marginBottom:'0.5rem'}}>
+                  {isToday(parseISO(othersSelectedDate)) ? '⚡ Today' : format(parseISO(othersSelectedDate),'EEE, MMM d')}
+                </h2>
+                <p style={{color:'var(--gray-500)',fontSize:'0.875rem',marginBottom:'1.25rem'}}>
+                  {dayMatches.length} match{dayMatches.length!==1?'es':''} — tap a match to see all predictions
+                </p>
+                <div style={{display:'flex',flexDirection:'column',gap:'0.65rem'}}>
+                  {dayMatches.map(match => {
+                    const isCompleted = match.result !== null
+                    const totalPreds = othersProfiles.filter(p => getOthersPred(p.id, match.id)).length
+                    return (
+                      <button
+                        key={match.id}
+                        onClick={() => setOthersSelectedMatch(match)}
+                        style={{
+                          background:'rgba(30,30,26,0.9)',
+                          border: isCompleted ? '1px solid rgba(245,200,66,0.2)' : '1px solid rgba(255,255,255,0.07)',
+                          borderRadius:'var(--radius-lg)',
+                          padding:'1rem 1.2rem',
+                          cursor:'pointer',textAlign:'left',width:'100%',
+                          transition:'border-color 0.15s',
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.borderColor='rgba(245,200,66,0.4)'}
+                        onMouseLeave={e => e.currentTarget.style.borderColor=isCompleted?'rgba(245,200,66,0.2)':'rgba(255,255,255,0.07)'}
+                      >
+                        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:'0.5rem',flexWrap:'wrap',gap:'0.4rem'}}>
+                          <span style={{fontSize:'0.72rem',fontWeight:600,color:'var(--gray-500)',textTransform:'uppercase',letterSpacing:'0.06em'}}>
+                            {match.stage}{match.group_name ? ` · Group ${match.group_name}` : ''} · {toIST(match.match_time)}
+                          </span>
+                          <div style={{display:'flex',gap:'0.4rem',alignItems:'center'}}>
+                            {isCompleted && <span className="match-result-badge">{match.score_a}–{match.score_b}</span>}
+                            <span style={{fontSize:'0.75rem',color:'var(--gray-500)',background:'rgba(255,255,255,0.06)',padding:'2px 8px',borderRadius:'99px'}}>
+                              {totalPreds}/{othersProfiles.length} picks
+                            </span>
+                            <span style={{color:'var(--gold)',fontSize:'0.85rem'}}>›</span>
+                          </div>
+                        </div>
+                        <div style={{display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap'}}>
+                          <span style={{display:'flex',alignItems:'center',gap:'6px',fontFamily:'var(--font-display)',fontSize:'1.15rem',color:'var(--white)'}}>
+                            <FlagImg team={match.team_a} size={20}/>{match.team_a}
+                          </span>
+                          <span style={{color:'var(--gray-500)',fontSize:'0.85rem'}}>vs</span>
+                          <span style={{display:'flex',alignItems:'center',gap:'6px',fontFamily:'var(--font-display)',fontSize:'1.15rem',color:'var(--white)'}}>
+                            <FlagImg team={match.team_b} size={20}/>{match.team_b}
+                          </span>
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )
+          }
+
+          // ── Date list view
+          return (
+            <div>
+              <p style={{color:'var(--gray-500)',fontSize:'0.9rem',marginBottom:'1.25rem'}}>
+                All predictions visible to admins regardless of match status. Pick a date, then a match.
+              </p>
+              {dates.length === 0 ? (
+                <div className="card" style={{textAlign:'center',padding:'2rem',color:'var(--gray-500)'}}>
+                  No matches found.
+                </div>
+              ) : (
+                <div style={{display:'flex',flexDirection:'column',gap:'0.6rem'}}>
+                  {dates.map(d => {
+                    const dayMatches = byDate[d]
+                    const completed = dayMatches.filter(m => m.result !== null).length
+                    const total = dayMatches.length
+                    return (
+                      <button
+                        key={d}
+                        onClick={() => setOthersSelectedDate(d)}
+                        style={{
+                          display:'flex',alignItems:'center',justifyContent:'space-between',
+                          padding:'1rem 1.2rem',
+                          background:'rgba(30,30,26,0.9)',
+                          border:'1px solid rgba(255,255,255,0.07)',
+                          borderRadius:'var(--radius-lg)',
+                          cursor:'pointer',textAlign:'left',width:'100%',
+                          transition:'border-color 0.15s',
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.borderColor='rgba(245,200,66,0.3)'}
+                        onMouseLeave={e => e.currentTarget.style.borderColor='rgba(255,255,255,0.07)'}
+                      >
+                        <div>
+                          <div style={{fontWeight:600,fontSize:'1rem',color:isToday(parseISO(d))?'var(--gold)':'var(--white)',marginBottom:'0.2rem'}}>
+                            {isToday(parseISO(d)) ? '⚡ Today — ' : isBefore(startOfDay(parseISO(d)), startOfDay(new Date())) ? '' : '🗓 '}
+                            {format(parseISO(d),'EEEE, MMMM d yyyy')}
+                          </div>
+                          <div style={{fontSize:'0.82rem',color:'var(--gray-500)'}}>
+                            {total} match{total!==1?'es':''} · {completed} completed
+                          </div>
+                        </div>
+                        <div style={{display:'flex',alignItems:'center',gap:'0.6rem'}}>
+                          <div style={{display:'flex',gap:'3px',flexWrap:'wrap',maxWidth:'110px'}}>
+                            {dayMatches.slice(0,6).flatMap(m=>[m.team_a,m.team_b]).map((t,i)=>(
+                              <FlagImg key={i} team={t} size={15}/>
+                            ))}
+                          </div>
+                          <span style={{color:'var(--gold)',fontSize:'1rem'}}>›</span>
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )
+        })()}
       </div>
     </>
   )

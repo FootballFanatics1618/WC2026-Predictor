@@ -1,12 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/router'
 import Navbar from '../components/Navbar'
 import FlagImg from '../components/FlagImg'
 import { supabase } from '../lib/supabase'
-import { generateScorelines } from '../lib/data'
+import { generateScorelines, TOURNAMENT_START } from '../lib/data'
 import { toIST } from '../lib/flags'
-import { isMatchPredictionLocked, timeUntilLock, isGoldenBootLocked, GOLDEN_BOOT_LOCK } from '../lib/locktime'
-import { ALL_PLAYERS } from '../lib/data'
+import { isMatchPredictionLocked, timeUntilLock } from '../lib/locktime'
+import { useDragScroll } from '../hooks/useDragScroll'
 import { format, parseISO, isToday, isBefore, startOfDay } from 'date-fns'
 
 export default function Predict() {
@@ -17,18 +18,17 @@ export default function Predict() {
   const [predictions, setPredictions] = useState({})
   const [savedPredictions, setSavedPredictions] = useState({})
   const [saving, setSaving] = useState({})
+  const [editing, setEditing] = useState({})
   const [tab, setTab] = useState('today')
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
   const [selectedUpcomingDate, setSelectedUpcomingDate] = useState(null)
   const [now, setNow] = useState(new Date())
-  // Golden Boot inline state
-  const [gbSearch, setGbSearch] = useState('')
-  const [gbPick, setGbPick] = useState('')
-  const [gbOpen, setGbOpen] = useState(false)
-  const [gbSaving, setGbSaving] = useState(false)
-  const [gbMsg, setGbMsg] = useState('')
-  const [gbLocked, setGbLocked] = useState(false)
+  const upcomingDateRef = useRef(null)
+  const upcomingScrollRef = useDragScroll()
+  const userRef = useRef(null)
+
+  useEffect(() => { upcomingDateRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' }) }, [selectedUpcomingDate])
 
   // Tick every minute to re-evaluate locks
   useEffect(() => {
@@ -49,6 +49,14 @@ export default function Predict() {
           setMatches(prev =>
             prev.map(m => (m.id === updated.id ? { ...m, ...updated } : m))
           )
+          // Re-fetch predictions so points chips update after admin scores
+          if (userRef.current) {
+            supabase.from('predictions').select('*').eq('user_id', userRef.current.id).then(({ data }) => {
+              const map = {}
+              ;(data || []).forEach(p => { map[p.match_id] = p })
+              setSavedPredictions(map)
+            })
+          }
         }
       )
       .subscribe()
@@ -60,8 +68,8 @@ export default function Predict() {
         .select('id, result, score_a, score_b')
         .not('result', 'is', null)
       if (data && data.length > 0) {
+        let changed = false
         setMatches(prev => {
-          let changed = false
           const next = prev.map(m => {
             const fresh = data.find(d => d.id === m.id)
             if (fresh && m.result !== fresh.result) { changed = true; return { ...m, ...fresh } }
@@ -69,6 +77,13 @@ export default function Predict() {
           })
           return changed ? next : prev
         })
+        // Re-fetch predictions when any match result changes
+        if (changed && userRef.current) {
+          const { data: preds } = await supabase.from('predictions').select('*').eq('user_id', userRef.current.id)
+          const map = {}
+          ;(preds || []).forEach(p => { map[p.match_id] = p })
+          setSavedPredictions(map)
+        }
       }
     }, 30000)
 
@@ -84,6 +99,7 @@ export default function Predict() {
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) { router.push('/login'); return }
     setUser(session.user)
+    userRef.current = session.user
 
     const [profileRes, matchesRes, predsRes] = await Promise.all([
       supabase.from('profiles').select('*').eq('id', session.user.id).single(),
@@ -97,12 +113,7 @@ export default function Predict() {
     ;(predsRes.data || []).forEach(p => { predsMap[p.match_id] = p })
     setSavedPredictions(predsMap)
     setLoading(false)
-    if (profileRes.data) {
-      setGbPick(profileRes.data.golden_boot_pick || '')
-      setGbSearch(profileRes.data.golden_boot_pick || '')
-    }
-    setGbLocked(isGoldenBootLocked())
-    if (router.query.welcome) setMessage("🎉 Welcome! Set your Golden Boot pick on the home page, then predict matches here!")
+    if (router.query.welcome) setMessage("🎉 Welcome! Now predict today's matches!")
   }
 
   // A match is in "past days" if its date is strictly before today
@@ -115,7 +126,7 @@ export default function Predict() {
   // Prediction lock: 1 hour before kick-off OR if result already entered
   function isPredLocked(match) {
     if (isMatchCompleted(match)) return true
-    return isMatchPredictionLocked(match.match_date, match.match_time)
+    return isMatchPredictionLocked(match.match_date, match.match_time, match.kickoff_utc)
   }
 
   // Tabs:
@@ -138,6 +149,11 @@ export default function Predict() {
     if (upcomingDates.length > 0 && !selectedUpcomingDate) setSelectedUpcomingDate(upcomingDates[0])
   }, [upcomingDates.length])
 
+  // Check if all matches for a given list are predicted
+  function allPredicted(matchList) {
+    return matchList.length > 0 && matchList.every(m => savedPredictions[m.id])
+  }
+
   function handleResultChange(matchId, value) {
     setPredictions(prev => ({ ...prev, [matchId]: { result: value, scoreA: '', scoreB: '' } }))
   }
@@ -153,6 +169,8 @@ export default function Predict() {
       alert('Please select both a result and scoreline.')
       return
     }
+    // Capture scroll position before any state updates
+    const scrollY = window.scrollY
     setSaving(s => ({ ...s, [match.id]: true }))
     const { error } = await supabase.from('predictions').upsert({
       user_id: user.id, match_id: match.id,
@@ -161,10 +179,27 @@ export default function Predict() {
       predicted_score_b: pred.scoreB,
     }, { onConflict: 'user_id,match_id' })
     if (!error) {
+      // If the match is already completed, score the prediction immediately
+      let scored = { is_result_correct: null, is_score_correct: null, points_earned: null }
+      if (match.result) {
+        const rc = pred.result === match.result
+        const sc = rc && pred.scoreA === match.score_a && pred.scoreB === match.score_b
+        scored = {
+          is_result_correct: rc,
+          is_score_correct: sc,
+          points_earned: sc ? 5 : rc ? 3 : 0,
+        }
+        await supabase.from('predictions').update(scored)
+          .eq('user_id', user.id).eq('match_id', match.id)
+      }
       setSavedPredictions(prev => ({
         ...prev,
-        [match.id]: { predicted_result: pred.result, predicted_score_a: pred.scoreA, predicted_score_b: pred.scoreB }
+        [match.id]: { predicted_result: pred.result, predicted_score_a: pred.scoreA, predicted_score_b: pred.scoreB, ...scored }
       }))
+      setEditing(prev => ({ ...prev, [match.id]: false }))
+      setPredictions(prev => { const next = { ...prev }; delete next[match.id]; return next })
+      // Restore scroll position after React re-renders
+      requestAnimationFrame(() => { window.scrollTo({ top: scrollY, behavior: 'instant' }) })
     }
     setSaving(s => ({ ...s, [match.id]: false }))
   }
@@ -186,8 +221,11 @@ export default function Predict() {
     const currentScoreline = pred?.scoreA !== undefined && pred?.scoreB !== undefined ? `${pred.scoreA}-${pred.scoreB}` : ''
     const isCorrectResult = completed && saved && saved.is_result_correct
     const isCorrectScore = completed && saved && saved.is_score_correct
-    const lockCountdown = !predLocked ? timeUntilLock(match.match_date, match.match_time) : null
+    const lockCountdown = !predLocked ? timeUntilLock(match.match_date, match.match_time, match.kickoff_utc) : null
     const hasPrediction = !!saved
+    const isEditing = !!editing[match.id]
+    const isLocked = predLocked || completed
+    const dropdownsDisabled = isLocked || (hasPrediction && !isEditing)
 
     return (
       <div className={`match-card ${completed ? 'completed' : ''} ${hasPrediction && !completed ? 'predicted' : ''}`}
@@ -237,7 +275,7 @@ export default function Predict() {
         {completed && (
           <div style={{ textAlign: 'center', marginBottom: '0.6rem' }}>
             <span className="match-result-badge" style={{ fontSize: '1rem', padding: '0.3rem 1rem' }}>
-              {match.score_a} – {match.score_b}
+              FT {match.score_a} – {match.score_b}
             </span>
             {saved && (
               <div style={{ marginTop: '0.4rem', fontSize: '0.82rem', color: 'var(--gray-500)' }}>
@@ -248,11 +286,11 @@ export default function Predict() {
         )}
 
         {/* Prediction inputs — stacked on mobile */}
-        {!predLocked && !completed && (
+        {!isLocked && (
           <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'flex-end', flexWrap: 'wrap', marginTop: '0.5rem' }}>
             <div style={{ flex: '1 1 140px', minWidth: 0 }}>
               <label className="form-label">Result</label>
-              <select className="form-select" value={pred?.result || ''} onChange={e => handleResultChange(match.id, e.target.value)}>
+              <select className="form-select" value={pred?.result || ''} onChange={e => handleResultChange(match.id, e.target.value)} disabled={dropdownsDisabled}>
                 <option value="">— Pick result —</option>
                 <option value="teamA">{match.team_a} Win</option>
                 {match.stage === 'Group Stage' && <option value="draw">Draw</option>}
@@ -261,19 +299,35 @@ export default function Predict() {
             </div>
             <div style={{ flex: '1 1 110px', minWidth: 0 }}>
               <label className="form-label">Scoreline</label>
-              <select className="form-select" value={currentScoreline} onChange={e => handleScorelineChange(match.id, e.target.value)} disabled={!pred?.result}>
+              <select className="form-select" value={currentScoreline} onChange={e => handleScorelineChange(match.id, e.target.value)} disabled={dropdownsDisabled || !pred?.result}>
                 <option value="">— Score —</option>
                 {scorelines.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
-            <button
-              className="btn btn-primary btn-sm"
-              onClick={() => savePrediction(match)}
-              disabled={saving[match.id]}
-              style={{ whiteSpace: 'nowrap', flexShrink: 0, marginBottom: '2px' }}
-            >
-              {saving[match.id] ? '...' : saved ? '✓ Update' : 'Save'}
-            </button>
+            {hasPrediction && !isEditing ? (
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => {
+                  setEditing(prev => ({ ...prev, [match.id]: true }))
+                  if (saved && !predictions[match.id]) {
+                    setPredictions(prev => ({ ...prev, [match.id]: { result: saved.predicted_result, scoreA: saved.predicted_score_a, scoreB: saved.predicted_score_b } }))
+                  }
+                }}
+                style={{ whiteSpace: 'nowrap', flexShrink: 0, marginBottom: '2px', borderColor: 'rgba(245,200,66,0.45)', color: 'var(--gold)' }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+                Edit
+              </button>
+            ) : (
+              <button
+                className="btn btn-primary btn-sm"
+                onClick={() => savePrediction(match)}
+                disabled={saving[match.id]}
+                style={{ whiteSpace: 'nowrap', flexShrink: 0, marginBottom: '2px' }}
+              >
+                {saving[match.id] ? '...' : 'Save'}
+              </button>
+            )}
           </div>
         )}
 
@@ -303,15 +357,19 @@ export default function Predict() {
     return unlocked.every(m => !!savedPredictions[m.id])
   }
 
+  const isGbLocked = new Date() >= TOURNAMENT_START
+
   if (loading) return (
     <><Navbar user={user} /><div style={{ textAlign: 'center', paddingTop: '5rem', color: 'var(--gray-500)' }}>Loading matches...</div></>
   )
+
+  const todayDone = allPredicted(todayMatches)
 
   return (
     <>
       <Navbar user={user} />
       {/* Full-width container — no max-width cap for predict page */}
-      <div style={{ padding: '1.5rem', maxWidth: '100%', boxSizing: 'border-box' }}>
+      <div style={{ padding: '1.25rem 1rem', maxWidth: '100%', boxSizing: 'border-box' }}>
         {message && (
           <div className="alert alert-success" style={{ maxWidth: '700px', margin: '0 auto 1.5rem' }}>
             {message}
@@ -319,78 +377,27 @@ export default function Predict() {
           </div>
         )}
 
+        <div style={{ fontWeight: 700, color: 'var(--gold)', marginBottom: '1.25rem', maxWidth: '700px', margin: '0 auto 1.25rem' }}>👋 {profile.username}</div>
         {profile && (
           <div className="card-gold" style={{ maxWidth: '700px', margin: '0 auto 1.5rem' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.9rem' }}>
-              <span style={{ fontWeight: 700, color: 'var(--gold)', fontSize: '1rem' }}>👋 {profile.first_name || profile.username}</span>
-              {gbLocked
-                ? <span className="lock-chip">🔒 Golden Boot locked</span>
-                : <span style={{ fontSize: '0.75rem', color: '#f6ad55', background: 'rgba(246,173,85,0.12)', padding: '2px 8px', borderRadius: '99px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.75rem' }}>
+              <div>
+                <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--gray-300)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.15rem' }}>🥇 Golden Boot</div>
+                {profile.golden_boot_pick
+                  ? <div style={{ fontSize: '0.95rem', color: 'var(--white)', fontWeight: 600 }}>{profile.golden_boot_pick}</div>
+                  : <div style={{ color: 'var(--gray-500)', fontSize: '0.85rem' }}>Not selected yet</div>
+                }
+              </div>
+              <Link href="/golden-boot" className={`btn btn-sm ${profile.golden_boot_pick ? 'btn-ghost' : 'btn-primary'}`}>
+                {profile.golden_boot_pick ? 'Edit' : 'Choose player'}
+              </Link>
+            </div>
+            {profile.golden_boot_pick && (
+              isGbLocked
+                ? <span className="lock-chip">🔒 Locked</span>
+                : <div style={{ fontSize: '0.75rem', color: '#f6ad55', background: 'rgba(246,173,85,0.12)', padding: '2px 8px', borderRadius: '99px', display: 'inline-block' }}>
                     ⚠️ Freezes Jun 10, 11:30 PM IST — 1hr before tournament
-                  </span>
-              }
-            </div>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-              <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--gray-300)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>🥇 Golden Boot Pick</span>
-              <span style={{ fontSize: '0.78rem', color: 'var(--gray-500)' }}>— +10 pts if correct</span>
-            </div>
-
-            {gbLocked ? (
-              <div style={{ padding: '0.6rem 0.9rem', background: 'rgba(255,255,255,0.04)', borderRadius: 'var(--radius)', fontSize: '0.925rem', color: 'var(--white)', fontWeight: 600 }}>
-                {profile.golden_boot_pick || <span style={{ color: 'var(--gray-500)' }}>No pick was made before lock</span>}
-              </div>
-            ) : (
-              <div style={{ position: 'relative' }}>
-                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                  <div style={{ flex: 1, position: 'relative' }}>
-                    <input
-                      className="form-input"
-                      placeholder="Search player name..."
-                      value={gbSearch}
-                      onChange={e => { setGbSearch(e.target.value); setGbPick(''); setGbOpen(true) }}
-                      onFocus={() => setGbOpen(true)}
-                      onBlur={() => setTimeout(() => setGbOpen(false), 150)}
-                      style={{ paddingRight: gbPick ? '2.2rem' : '0.9rem' }}
-                    />
-                    {gbPick && <span style={{ position: 'absolute', right: '0.7rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--success)' }}>✓</span>}
                   </div>
-                  <button
-                    className="btn btn-primary btn-sm"
-                    style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
-                    disabled={gbSaving || !gbPick}
-                    onClick={async () => {
-                      if (!gbPick) return
-                      setGbSaving(true)
-                      const { error } = await supabase.from('profiles').update({ golden_boot_pick: gbPick }).eq('id', user.id)
-                      if (!error) { setProfile(p => ({ ...p, golden_boot_pick: gbPick })); setGbMsg('✅ Saved!') }
-                      else setGbMsg('❌ Error saving')
-                      setGbSaving(false)
-                      setTimeout(() => setGbMsg(''), 2500)
-                    }}
-                  >
-                    {gbSaving ? '...' : profile.golden_boot_pick ? 'Update' : 'Save Pick'}
-                  </button>
-                </div>
-                {gbMsg && <div style={{ fontSize: '0.8rem', marginTop: '0.4rem', color: gbMsg.startsWith('✅') ? 'var(--success)' : 'var(--danger)' }}>{gbMsg}</div>}
-                {gbOpen && (() => {
-                  const players = [...ALL_PLAYERS].sort().filter(p => !gbSearch || p.toLowerCase().includes(gbSearch.toLowerCase()))
-                  return players.length > 0 ? (
-                    <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: '90px', background: 'var(--gray-900)', border: '1px solid rgba(245,200,66,0.3)', borderRadius: 'var(--radius)', maxHeight: '200px', overflowY: 'auto', zIndex: 300, boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}>
-                      {players.slice(0, 60).map(p => (
-                        <div key={p} onMouseDown={() => { setGbPick(p); setGbSearch(p); setGbOpen(false) }}
-                          style={{ padding: '0.5rem 0.9rem', cursor: 'pointer', fontSize: '0.875rem', color: gbPick === p ? 'var(--gold)' : 'var(--white)', background: gbPick === p ? 'rgba(245,200,66,0.08)' : 'transparent', borderBottom: '1px solid rgba(255,255,255,0.04)', display: 'flex', justifyContent: 'space-between' }}
-                          onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.07)'}
-                          onMouseLeave={e => e.currentTarget.style.background = gbPick === p ? 'rgba(245,200,66,0.08)' : 'transparent'}
-                        >
-                          {p} {gbPick === p && <span>✓</span>}
-                        </div>
-                      ))}
-                      {players.length > 60 && <div style={{ padding: '0.4rem 0.9rem', fontSize: '0.78rem', color: 'var(--gray-500)', textAlign: 'center' }}>Type more to narrow ({players.length} players)</div>}
-                    </div>
-                  ) : null
-                })()}
-              </div>
             )}
           </div>
         )}
@@ -398,11 +405,11 @@ export default function Predict() {
         <h1 className="section-title" style={{ maxWidth: '700px', margin: '0 auto 1rem' }}>MATCH PREDICTIONS</h1>
 
         <div className="tabs" style={{ maxWidth: '700px', margin: '0 auto 1.5rem' }}>
-          <button className={`tab-btn ${tab === 'today' ? 'active' : ''}`} onClick={() => setTab('today')}>
-            Today {todayMatches.length > 0 && `(${todayMatches.length})`}
-          </button>
           <button className={`tab-btn ${tab === 'upcoming' ? 'active' : ''}`} onClick={() => setTab('upcoming')}>
             Upcoming {upcomingMatches.length > 0 && `(${upcomingMatches.length})`}
+          </button>
+          <button className={`tab-btn ${tab === 'today' ? 'active' : ''}`} onClick={() => setTab('today')}>
+            Today {todayMatches.length > 0 && (todayDone ? '✅' : `(${todayMatches.length})`)}
           </button>
           <button className={`tab-btn ${tab === 'completed' ? 'active' : ''}`} onClick={() => setTab('completed')}>
             Completed {completedMatches.length > 0 && `(${completedMatches.length})`}
@@ -423,15 +430,16 @@ export default function Predict() {
           upcomingDates.length === 0
             ? <div className="card" style={{ maxWidth: '700px', margin: '0 auto', textAlign: 'center', padding: '3rem', color: 'var(--gray-500)' }}>No upcoming matches.</div>
             : <>
-                {/* Date chip strip */}
-                <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '1.25rem', maxWidth: '700px', margin: '0 auto 1.25rem' }}>
+                {/* Date chip strip — with partial prediction coloring */}
+                <div ref={upcomingScrollRef} className="scroll-row" style={{ marginBottom: '1.25rem', maxWidth: '700px', margin: '0 auto 1.25rem' }}>
                   {upcomingDates.map(d => {
                     const isSelected = selectedUpcomingDate === d
                     const dayMatches = upcomingByDate[d]
-                    const allDone = dateAllSaved(dayMatches)
-                    const cnt = dayMatches.length
+                    const done = allPredicted(dayMatches)
+                    const predictedCount = dayMatches.filter(m => savedPredictions[m.id]).length
+                    const partial = !done && predictedCount > 0
                     return (
-                      <button key={d} onClick={() => setSelectedUpcomingDate(d)} style={{
+                      <button key={d} ref={isSelected ? upcomingDateRef : null} onClick={() => setSelectedUpcomingDate(d)} style={{
                         padding: '0.4rem 0.85rem',
                         borderRadius: '99px',
                         cursor: 'pointer',
@@ -444,9 +452,15 @@ export default function Predict() {
                         display: 'flex', alignItems: 'center', gap: '5px',
                       }}>
                         {format(parseISO(d), 'EEE, MMM d')}
-                        {allDone
+                        {done
                           ? <span style={{ fontSize: '0.85rem', color: 'var(--success)' }}>✅</span>
-                          : <span style={{ fontSize: '0.68rem', background: 'rgba(255,255,255,0.08)', color: 'var(--gray-500)', borderRadius: '99px', padding: '1px 5px' }}>{cnt}</span>
+                          : <span style={{
+                              fontSize: '0.7rem', borderRadius: '99px', padding: '1px 6px',
+                              background: partial ? 'rgba(56,161,105,0.2)' : 'rgba(255,255,255,0.08)',
+                              color: partial ? 'var(--success)' : 'var(--gray-500)',
+                            }}>
+                              {predictedCount}/{dayMatches.length}
+                            </span>
                         }
                       </button>
                     )

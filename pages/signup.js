@@ -4,6 +4,7 @@ import { useRouter } from 'next/router'
 import Navbar from '../components/Navbar'
 import { supabase } from '../lib/supabase'
 
+// ─── Main Signup Page ─────────────────────────────────────────────────────────
 export default function Signup() {
   const router = useRouter()
   const [form, setForm] = useState({ firstName: '', lastName: '', email: '', password: '' })
@@ -14,6 +15,7 @@ export default function Signup() {
     setForm(f => ({ ...f, [e.target.name]: e.target.value }))
   }
 
+  // Step 1: create auth user + profile (no GB pick yet)
   async function handleSubmit(e) {
     e.preventDefault()
     setError('')
