@@ -110,7 +110,7 @@ export default function Home() {
                 </div>
                 {gbLocked
                   ? <span className="lock-chip">🔒 Locked</span>
-                  : <span style={{ fontSize: '0.75rem', color: 'var(--gray-500)' }}>Locks Jun 10, 11:30 PM IST</span>
+                  : <span style={{ fontSize: '0.75rem', color: 'var(--gray-500)' }}>Locks Jun 11, 11:30 PM IST</span>
                 }
               </div>
               <p style={{ fontSize: '0.82rem', color: 'var(--gray-500)', marginBottom: '0.9rem' }}>

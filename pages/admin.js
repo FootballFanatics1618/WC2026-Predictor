@@ -6,8 +6,8 @@ import FlagImg from '../components/FlagImg'
 import { supabase } from '../lib/supabase'
 import { ALL_PLAYERS } from '../lib/data'
 import { useDragScroll } from '../hooks/useDragScroll'
-import { toIST, toISTFull } from '../lib/flags'
-import { format, parseISO, formatDistanceToNow, isToday, isBefore, startOfDay } from 'date-fns'
+import { toIST, toISTFull, matchISTDate, todayIST } from '../lib/flags'
+import { format, parseISO, formatDistanceToNow } from 'date-fns'
 
 const ADMIN_EMAILS = process.env.NEXT_PUBLIC_ADMIN_EMAILS
   ? process.env.NEXT_PUBLIC_ADMIN_EMAILS.split(',').map(e => e.trim())
@@ -452,20 +452,29 @@ export default function Admin() {
     }
   }
 
+  // Resolve a group-stage placeholder like "Winner A", "Runner-up B",
+  // "Best 3rd (A/B/C/D/F)" to an actual team name.
+  // best3rds is a ranked array of { team, group, points, gd, gf } (best first).
+  // We consume entries from it as we assign slots — pass a copy per call or
+  // manage the array externally.
   function resolveGroupSlot(placeholder, slotMap, best3rds) {
     if (!placeholder) return null
+    // Direct slot lookup: "Winner A", "Runner-up B"
     if (slotMap[placeholder]) return slotMap[placeholder]
+    // Best 3rd: "Best 3rd (A/B/C/D/F)" — pick the highest-ranked 3rd-place team
+    // whose group is in the allowed list.
     if (placeholder.startsWith('Best 3rd')) {
-      const match = placeholder.match(/\(([^)]+)\)/)
-      if (match) {
-        const allowed = match[1].split('/').map(s => s.trim())
-        const pick = best3rds.find(t => allowed.includes(t.group))
-        if (pick) {
-          best3rds.splice(best3rds.indexOf(pick), 1)
+      const m = placeholder.match(/\(([^)]+)\)/)
+      if (m) {
+        const allowed = m[1].split('/').map(s => s.trim())
+        const idx = best3rds.findIndex(t => allowed.includes(t.group))
+        if (idx !== -1) {
+          const [pick] = best3rds.splice(idx, 1)
           return pick.team
         }
       }
-      if (best3rds.length > 0) { const p = best3rds.shift(); return p.team }
+      // Fallback: take the best available 3rd regardless of group
+      if (best3rds.length > 0) return best3rds.shift().team
     }
     return null
   }
@@ -523,8 +532,10 @@ export default function Admin() {
   })
 
   function dayLabel(dateStr) {
+    // dateStr is an ET date string from the DB — compare as ET date for admin display
+    const istNow = todayIST()
+    const todayFlag = dateStr === istNow
     const d = parseISO(dateStr)
-    const todayFlag = isToday(d)
     return (todayFlag ? '📅 Today · ' : '') + format(d, 'EEE, MMM d')
   }
 
@@ -575,12 +586,16 @@ export default function Admin() {
 
               {/* Schedule display */}
               <div style={{background:'rgba(0,0,0,0.2)',borderRadius:'var(--radius)',padding:'0.875rem 1rem',marginBottom:'1.25rem',fontSize:'0.8rem',color:'var(--gray-400)',lineHeight:'1.8'}}>
-                <div style={{color:'var(--gold)',fontWeight:700,marginBottom:'0.4rem',fontSize:'0.75rem',letterSpacing:'0.06em'}}>CRON SCHEDULE (UTC)</div>
-                <div>18:30 · 18:50 — after 12:00 ET kick-offs</div>
-                <div>21:30 · 21:50 — after 15:00 ET kick-offs</div>
-                <div>00:30 · 00:50 — after 18:00 ET kick-offs</div>
-                <div>03:30 · 03:50 — after 21:00 ET kick-offs</div>
-                <div style={{marginTop:'0.4rem',color:'var(--gray-500)'}}>+ safety catchall every 3 hours</div>
+                <div style={{color:'var(--gold)',fontWeight:700,marginBottom:'0.4rem',fontSize:'0.75rem',letterSpacing:'0.06em'}}>CRON SCHEDULE</div>
+                <div style={{display:'grid',gridTemplateColumns:'100px 130px 1fr',gap:'0.1rem 0.75rem'}}>
+                  <span style={{color:'var(--gray-500)'}}>UTC</span><span style={{color:'var(--gray-500)'}}>IST</span><span style={{color:'var(--gray-500)'}}>After kick-off</span>
+                  <span>18:30 · 18:50</span><span>00:00 · 00:20 IST</span><span>12:00 ET matches</span>
+                  <span>21:30 · 21:50</span><span>03:00 · 03:20 IST</span><span>15:00 ET matches</span>
+                  <span>00:30 · 00:50</span><span>06:00 · 06:20 IST</span><span>18:00 ET matches</span>
+                  <span>03:30 · 03:50</span><span>09:00 · 09:20 IST</span><span>21:00 ET matches</span>
+                  <span>07:30 · 07:50</span><span>13:00 · 13:20 IST</span><span>02:00 ET matches</span>
+                </div>
+                <div style={{marginTop:'0.5rem',color:'var(--gray-500)'}}>+ safety catchall every 3 hours</div>
               </div>
 
               <div style={{display:'flex',gap:'0.75rem',alignItems:'center',flexWrap:'wrap'}}>
@@ -1055,43 +1070,80 @@ export default function Admin() {
                   </button>
                 </div>
                 {showStandings && (
-                  <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(300px,1fr))',gap:'1rem',marginBottom:'2rem'}}>
-                    {groups.map(g => (
-                      <div key={g} className="card" style={{padding:'1rem'}}>
-                        <div style={{fontFamily:'var(--font-display)',fontSize:'1rem',color:'var(--gold)',marginBottom:'0.6rem',letterSpacing:'0.05em'}}>GROUP {g}</div>
-                        <table style={{width:'100%',fontSize:'0.78rem'}}>
-                          <thead>
-                            <tr>
-                              <th style={{textAlign:'left',paddingBottom:'4px',color:'var(--gray-500)',fontWeight:600}}>Team</th>
-                              <th style={{textAlign:'center',paddingBottom:'4px',color:'var(--gray-500)',fontWeight:600}}>P</th>
-                              <th style={{textAlign:'center',paddingBottom:'4px',color:'var(--gray-500)',fontWeight:600}}>W</th>
-                              <th style={{textAlign:'center',paddingBottom:'4px',color:'var(--gray-500)',fontWeight:600}}>D</th>
-                              <th style={{textAlign:'center',paddingBottom:'4px',color:'var(--gray-500)',fontWeight:600}}>L</th>
-                              <th style={{textAlign:'center',paddingBottom:'4px',color:'var(--gray-500)',fontWeight:600}}>GD</th>
-                              <th style={{textAlign:'center',paddingBottom:'4px',color:'var(--gold)',fontWeight:700}}>Pts</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {(standingsByGroup[g] || []).map((row, i) => (
-                              <tr key={row.team}>
-                                <td style={{color: i < 2 ? 'var(--white)' : i === 2 ? '#f6ad55' : 'var(--gray-500)', fontWeight: i < 2 ? 600 : 400, paddingTop:'3px'}}>
-                                  {i===0?'🥇':i===1?'🥈':i===2?'🟡':''} {row.team}
-                                </td>
-                                <td style={{textAlign:'center',color:'var(--gray-500)'}}>{row.played}</td>
-                                <td style={{textAlign:'center'}}>{row.won}</td>
-                                <td style={{textAlign:'center'}}>{row.drawn}</td>
-                                <td style={{textAlign:'center'}}>{row.lost}</td>
-                                <td style={{textAlign:'center',color: (row.goals_for-row.goals_against)>0?'#68d391':(row.goals_for-row.goals_against)<0?'#fc8181':'var(--gray-300)'}}>
-                                  {row.goals_for-row.goals_against>0?'+':''}{row.goals_for-row.goals_against}
-                                </td>
-                                <td style={{textAlign:'center',fontWeight:700,color:'var(--gold)'}}>{row.points}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    ))}
-                  </div>
+                  <>
+                    {/* Legend */}
+                    <div style={{display:'flex',gap:'1.25rem',marginBottom:'0.75rem',flexWrap:'wrap',fontSize:'0.72rem',color:'var(--gray-500)'}}>
+                      <span><span style={{color:'#68d391',fontWeight:700}}>█</span> Qualify (Top 2)</span>
+                      <span><span style={{color:'#f6ad55',fontWeight:700}}>█</span> Best 3rd (potential)</span>
+                      <span style={{color:'var(--gray-600)'}}>P=Played · W/D/L · GF/GA · GD · Pts</span>
+                    </div>
+                    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(340px,1fr))',gap:'1rem',marginBottom:'2rem'}}>
+                      {groups.map(g => {
+                        const rows = standingsByGroup[g] || []
+                        const gamesPlayed = rows.reduce((s,r)=>s+r.played,0) / 2
+                        const totalGames = 6 // 4 teams × 3 matchdays / 2
+                        return (
+                          <div key={g} className="card" style={{padding:'1rem 0.85rem'}}>
+                            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'0.6rem'}}>
+                              <div style={{fontFamily:'var(--font-display)',fontSize:'1rem',color:'var(--gold)',letterSpacing:'0.05em'}}>GROUP {g}</div>
+                              <div style={{fontSize:'0.7rem',color:'var(--gray-500)'}}>{gamesPlayed}/{totalGames} played</div>
+                            </div>
+                            <div style={{overflowX:'auto'}}>
+                              <table style={{width:'100%',fontSize:'0.75rem',borderCollapse:'collapse',minWidth:'300px'}}>
+                                <thead>
+                                  <tr style={{borderBottom:'1px solid rgba(255,255,255,0.06)'}}>
+                                    <th style={{textAlign:'left',paddingBottom:'5px',color:'var(--gray-500)',fontWeight:600,paddingRight:'4px'}}>#</th>
+                                    <th style={{textAlign:'left',paddingBottom:'5px',color:'var(--gray-500)',fontWeight:600,minWidth:'90px'}}>Team</th>
+                                    <th style={{textAlign:'center',paddingBottom:'5px',color:'var(--gray-500)',fontWeight:600,width:'22px'}}>P</th>
+                                    <th style={{textAlign:'center',paddingBottom:'5px',color:'var(--gray-500)',fontWeight:600,width:'22px'}}>W</th>
+                                    <th style={{textAlign:'center',paddingBottom:'5px',color:'var(--gray-500)',fontWeight:600,width:'22px'}}>D</th>
+                                    <th style={{textAlign:'center',paddingBottom:'5px',color:'var(--gray-500)',fontWeight:600,width:'22px'}}>L</th>
+                                    <th style={{textAlign:'center',paddingBottom:'5px',color:'var(--gray-500)',fontWeight:600,width:'26px'}}>GF</th>
+                                    <th style={{textAlign:'center',paddingBottom:'5px',color:'var(--gray-500)',fontWeight:600,width:'26px'}}>GA</th>
+                                    <th style={{textAlign:'center',paddingBottom:'5px',color:'var(--gray-500)',fontWeight:600,width:'30px'}}>GD</th>
+                                    <th style={{textAlign:'center',paddingBottom:'5px',color:'var(--gold)',fontWeight:700,width:'28px'}}>Pts</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {rows.map((row, i) => {
+                                    const gd = row.goals_for - row.goals_against
+                                    // Colour-code: green = qualified (top 2), amber = potential best 3rd, dim = eliminated
+                                    const qualBg = i < 2
+                                      ? 'rgba(104,211,145,0.08)'
+                                      : i === 2
+                                        ? 'rgba(246,173,85,0.06)'
+                                        : 'transparent'
+                                    const nameColor = i < 2 ? '#68d391' : i === 2 ? '#f6ad55' : 'var(--gray-500)'
+                                    const qualBadge = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🟡' : '❌'
+                                    return (
+                                      <tr key={row.team} style={{background:qualBg,borderBottom:'1px solid rgba(255,255,255,0.03)'}}>
+                                        <td style={{textAlign:'center',paddingTop:'4px',paddingBottom:'4px',color:'var(--gray-600)',fontSize:'0.8rem'}}>{qualBadge}</td>
+                                        <td style={{color:nameColor,fontWeight:i<2?600:400,paddingTop:'4px',paddingBottom:'4px',paddingRight:'4px'}}>
+                                          <span style={{display:'inline-flex',alignItems:'center',gap:'5px'}}>
+                                            <FlagImg team={row.team} size={13}/>{row.team}
+                                          </span>
+                                        </td>
+                                        <td style={{textAlign:'center',color:'var(--gray-500)'}}>{row.played}</td>
+                                        <td style={{textAlign:'center',color:'var(--white)',fontWeight:row.won>0?600:400}}>{row.won}</td>
+                                        <td style={{textAlign:'center',color:'var(--gray-400)'}}>{row.drawn}</td>
+                                        <td style={{textAlign:'center',color:row.lost>0?'#fc8181':'var(--gray-400)'}}>{row.lost}</td>
+                                        <td style={{textAlign:'center',color:'var(--gray-300)',fontWeight:500}}>{row.goals_for}</td>
+                                        <td style={{textAlign:'center',color:'var(--gray-400)'}}>{row.goals_against}</td>
+                                        <td style={{textAlign:'center',color:gd>0?'#68d391':gd<0?'#fc8181':'var(--gray-300)',fontWeight:gd!==0?600:400}}>
+                                          {gd>0?`+${gd}`:gd}
+                                        </td>
+                                        <td style={{textAlign:'center',fontWeight:700,color:'var(--gold)',fontSize:'0.82rem'}}>{row.points}</td>
+                                      </tr>
+                                    )
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </>
                 )}
               </>
             )}
@@ -1219,7 +1271,7 @@ export default function Admin() {
                   <span style={{color:'var(--white)'}}>{format(parseISO(othersSelectedDate),'EEEE, MMMM d yyyy')}</span>
                 </div>
                 <h2 style={{fontFamily:'var(--font-display)',fontSize:'1.4rem',color:'var(--white)',marginBottom:'0.5rem'}}>
-                  {isToday(parseISO(othersSelectedDate)) ? '⚡ Today' : format(parseISO(othersSelectedDate),'EEE, MMM d')}
+                  {othersSelectedDate === todayIST() ? '⚡ Today' : format(parseISO(othersSelectedDate),'EEE, MMM d')}
                 </h2>
                 <p style={{color:'var(--gray-500)',fontSize:'0.875rem',marginBottom:'1.25rem'}}>
                   {dayMatches.length} match{dayMatches.length!==1?'es':''} — tap a match to see all predictions
@@ -1305,8 +1357,8 @@ export default function Admin() {
                         onMouseLeave={e => e.currentTarget.style.borderColor='rgba(255,255,255,0.07)'}
                       >
                         <div>
-                          <div style={{fontWeight:600,fontSize:'1rem',color:isToday(parseISO(d))?'var(--gold)':'var(--white)',marginBottom:'0.2rem'}}>
-                            {isToday(parseISO(d)) ? '⚡ Today — ' : isBefore(startOfDay(parseISO(d)), startOfDay(new Date())) ? '' : '🗓 '}
+                          <div style={{fontWeight:600,fontSize:'1rem',color:d===todayIST()?'var(--gold)':'var(--white)',marginBottom:'0.2rem'}}>
+                            {d===todayIST() ? '⚡ Today — ' : d < todayIST() ? '' : '🗓 '}
                             {format(parseISO(d),'EEEE, MMMM d yyyy')}
                           </div>
                           <div style={{fontSize:'0.82rem',color:'var(--gray-500)'}}>
