@@ -6,7 +6,7 @@ import FlagImg from '../components/FlagImg'
 import { supabase } from '../lib/supabase'
 import { ALL_PLAYERS } from '../lib/data'
 import { useDragScroll } from '../hooks/useDragScroll'
-import { toIST } from '../lib/flags'
+import { toIST, toISTFull } from '../lib/flags'
 import { format, parseISO, formatDistanceToNow, isToday, isBefore, startOfDay } from 'date-fns'
 
 const ADMIN_EMAILS = process.env.NEXT_PUBLIC_ADMIN_EMAILS
@@ -1132,7 +1132,12 @@ export default function Admin() {
                   <button onClick={() => { setOthersSelectedMatch(null) }} style={{background:'none',border:'none',color:'var(--gray-500)',cursor:'pointer',padding:0}}>Others' Picks</button>
                   <span>›</span>
                   <button onClick={() => { setOthersSelectedMatch(null) }} style={{background:'none',border:'none',color:'var(--gray-500)',cursor:'pointer',padding:0}}>
-                    {format(parseISO(match.match_date),'EEE, MMM d')}
+                    {(() => {
+                      const { dayOffset } = toISTFull(match.match_time)
+                      const baseDate = parseISO(match.match_date)
+                      const istDate = dayOffset ? new Date(baseDate.getTime() + 86400000) : baseDate
+                      return format(istDate, 'EEE, MMM d')
+                    })()}
                   </button>
                   <span>›</span>
                   <span style={{color:'var(--white)'}}>{match.team_a} vs {match.team_b}</span>

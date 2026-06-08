@@ -5,7 +5,7 @@ import Navbar from '../components/Navbar'
 import FlagImg from '../components/FlagImg'
 import { supabase } from '../lib/supabase'
 import { generateScorelines, TOURNAMENT_START } from '../lib/data'
-import { toIST } from '../lib/flags'
+import { toISTFull } from '../lib/flags'
 import { isMatchPredictionLocked, timeUntilLock } from '../lib/locktime'
 import { useDragScroll } from '../hooks/useDragScroll'
 import { format, parseISO, isToday, isBefore, startOfDay } from 'date-fns'
@@ -48,7 +48,12 @@ function MatchCard({ match, saved, localPred, isEditing, isSaving, onResultChang
             {match.stage}{match.group_name ? ` · Group ${match.group_name}` : ''}
           </span>
           <div style={{ fontSize: '0.78rem', color: 'var(--gray-500)', marginTop: '0.1rem', lineHeight: 1.4 }}>
-            {format(parseISO(match.match_date), 'EEE, MMM d')} · {toIST(match.match_time)}
+            {(() => {
+              const { time: istTime, dayOffset } = toISTFull(match.match_time)
+              const baseDate = parseISO(match.match_date)
+              const istDate = dayOffset ? new Date(baseDate.getTime() + 86400000) : baseDate
+              return `${format(istDate, 'EEE, MMM d')} · ${istTime}`
+            })()}
           </div>
           <div style={{ fontSize: '0.72rem', color: 'var(--gray-500)' }}>{match.venue}</div>
         </div>
