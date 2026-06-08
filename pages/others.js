@@ -6,6 +6,10 @@ import { supabase } from '../lib/supabase'
 import { toIST } from '../lib/flags'
 import { format, parseISO, isToday, isBefore, startOfDay } from 'date-fns'
 
+const ADMIN_EMAILS = process.env.NEXT_PUBLIC_ADMIN_EMAILS
+  ? process.env.NEXT_PUBLIC_ADMIN_EMAILS.split(',').map(e => e.trim())
+  : []
+
 export default function Others() {
   const router = useRouter()
   const [user, setUser] = useState(null)
@@ -23,6 +27,7 @@ export default function Others() {
   async function init() {
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) { router.push('/login'); return }
+    if (!ADMIN_EMAILS.includes(session.user.email)) { router.replace('/'); return }
     setUser(session.user)
     setMyId(session.user.id)
 
