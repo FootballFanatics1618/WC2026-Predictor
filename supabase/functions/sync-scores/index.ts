@@ -132,6 +132,14 @@ Deno.serve(async (req) => {
 
       const result = deriveResult(home, away)
 
+      // Knockout draw = penalties — API can't provide the winner, skip for manual admin entry
+      const isKnockout = dbMatch.stage !== 'Group Stage'
+      if (isKnockout && home === away) {
+        log.errors.push(`Match ${dbMatch.id}: penalties detected (scores level ${home}-${away}) — requires manual entry`)
+        console.log(`[sync-scores] Match ${dbMatch.id}: skipping penalty match for manual admin entry`)
+        continue
+      }
+
       // ── Step 4: Write result to DB ─────────────────────────────────────────
       const { error: updateErr } = await supabase
         .from('matches')

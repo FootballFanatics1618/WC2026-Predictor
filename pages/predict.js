@@ -24,10 +24,12 @@ function getResultLabel(result, teamA, teamB) {
   return ''
 }
 
-function MatchCard({ match, saved, localPred, isEditing, isSaving, onResultChange, onScorelineChange, onSave, onEdit }) {
+function MatchCard({ match, saved, localPred, isEditing, isSaving, onResultChange, onScorelineChange, onSave, onEdit, penaltyWinner, onPenaltyWinnerChange }) {
   const completed = isMatchCompleted(match)
   const predLocked = isPredLocked(match)
   const pred = localPred || (saved ? { result: saved.predicted_result, scoreA: saved.predicted_score_a, scoreB: saved.predicted_score_b } : null)
+  const isKnockout = match.stage !== 'Group Stage'
+  const isDrawET = pred?.result === 'draw_et'
   const scorelines = pred?.result ? generateScorelines(pred.result) : []
   const currentScoreline = pred?.scoreA !== undefined && pred?.scoreB !== undefined ? `${pred.scoreA}-${pred.scoreB}` : ''
   const isCorrectResult = completed && saved && saved.is_result_correct
@@ -36,6 +38,9 @@ function MatchCard({ match, saved, localPred, isEditing, isSaving, onResultChang
   const hasPrediction = !!saved
   const isLocked = predLocked || completed
   const dropdownsDisabled = isLocked || (hasPrediction && !isEditing)
+
+  // For display: detect draw-after-ET prediction (knockout + equal scores)
+  const savedIsDrawET = completed && isKnockout && saved && saved.predicted_score_a === saved.predicted_score_b
 
   return (
     <div className={`match-card ${completed ? 'completed' : ''} ${hasPrediction && !completed ? 'predicted' : ''}`}
@@ -99,7 +104,10 @@ function MatchCard({ match, saved, localPred, isEditing, isSaving, onResultChang
           )}
           {saved && (
             <div style={{ marginTop: '0.4rem', fontSize: '0.82rem', color: 'var(--gray-500)' }}>
-              Your pick: {getResultLabel(saved.predicted_result, match.team_a, match.team_b)} {saved.predicted_score_a}–{saved.predicted_score_b}
+              {savedIsDrawET
+                ? <>Draw {saved.predicted_score_a}–{saved.predicted_score_b} after ET · {getResultLabel(saved.predicted_result, match.team_a, match.team_b)} on penalties</>
+                : <>Your pick: {getResultLabel(saved.predicted_result, match.team_a, match.team_b)} {saved.predicted_score_a}–{saved.predicted_score_b}</>
+              }
             </div>
           )}
         </div>
@@ -113,6 +121,7 @@ function MatchCard({ match, saved, localPred, isEditing, isSaving, onResultChang
             <select className="form-select" value={pred?.result || ''} onChange={e => onResultChange(match.id, e.target.value)} disabled={dropdownsDisabled}>
               <option value="">— Pick result —</option>
               <option value="teamA">{match.team_a} Win</option>
+              {isKnockout && <option value="draw_et">Draw after Extra Time</option>}
               {match.stage === 'Group Stage' && <option value="draw">Draw</option>}
               <option value="teamB">{match.team_b} Win</option>
             </select>
@@ -124,6 +133,16 @@ function MatchCard({ match, saved, localPred, isEditing, isSaving, onResultChang
               {scorelines.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
+          {isDrawET && (
+            <div style={{ flex: '1 1 140px', minWidth: 0 }}>
+              <label className="form-label">Penalty Winner</label>
+              <select className="form-select" value={penaltyWinner || ''} onChange={e => onPenaltyWinnerChange(match.id, e.target.value)} disabled={dropdownsDisabled}>
+                <option value="">— Winner —</option>
+                <option value="teamA">{match.team_a}</option>
+                <option value="teamB">{match.team_b}</option>
+              </select>
+            </div>
+          )}
           {hasPrediction && !isEditing ? (
             <button
               className="btn btn-ghost btn-sm"
@@ -149,9 +168,10 @@ function MatchCard({ match, saved, localPred, isEditing, isSaving, onResultChang
       {/* Locked with a saved prediction */}
       {predLocked && !completed && saved && (
         <div style={{ fontSize: '0.85rem', color: 'var(--gray-500)', marginTop: '0.4rem' }}>
-          Your pick: <strong style={{ color: 'var(--white)' }}>
-            {getResultLabel(saved.predicted_result, match.team_a, match.team_b)} — {saved.predicted_score_a}–{saved.predicted_score_b}
-          </strong>
+          {isKnockout && saved.predicted_score_a === saved.predicted_score_b
+            ? <>Your pick: <strong style={{ color: 'var(--white)' }}>Draw {saved.predicted_score_a}–{saved.predicted_score_b} after ET · {getResultLabel(saved.predicted_result, match.team_a, match.team_b)} on penalties</strong></>
+            : <>Your pick: <strong style={{ color: 'var(--white)' }}>{getResultLabel(saved.predicted_result, match.team_a, match.team_b)} — {saved.predicted_score_a}–{saved.predicted_score_b}</strong></>
+          }
         </div>
       )}
       {predLocked && !completed && !saved && (
@@ -175,6 +195,7 @@ export default function Predict() {
   const [message, setMessage] = useState('')
   const [selectedUpcomingDate, setSelectedUpcomingDate] = useState(null)
   const [now, setNow] = useState(new Date())
+  const [penaltyWinners, setPenaltyWinners] = useState({})
   const upcomingDateRef = useRef(null)
   const upcomingScrollRef = useDragScroll()
   const userRef = useRef(null)
@@ -312,16 +333,32 @@ export default function Predict() {
 
   function handleResultChange(matchId, value) {
     setPredictions(prev => ({ ...prev, [matchId]: { result: value, scoreA: '', scoreB: '' } }))
+    if (value !== 'draw_et') setPenaltyWinners(prev => { const next = { ...prev }; delete next[matchId]; return next })
   }
   function handleScorelineChange(matchId, scoreline) {
     const [a, b] = scoreline.split('-').map(Number)
     setPredictions(prev => ({ ...prev, [matchId]: { ...prev[matchId], scoreA: a, scoreB: b } }))
   }
+  function handlePenaltyWinnerChange(matchId, value) {
+    setPenaltyWinners(prev => ({ ...prev, [matchId]: value }))
+  }
 
   function handleEdit(matchId, saved) {
     setEditing(prev => ({ ...prev, [matchId]: true }))
     if (saved && !predictions[matchId]) {
-      setPredictions(prev => ({ ...prev, [matchId]: { result: saved.predicted_result, scoreA: saved.predicted_score_a, scoreB: saved.predicted_score_b } }))
+      const isKnockout = matches.find(m => m.id === matchId)?.stage !== 'Group Stage'
+      const isDrawET = isKnockout && saved.predicted_score_a === saved.predicted_score_b
+      setPredictions(prev => ({
+        ...prev,
+        [matchId]: {
+          result: isDrawET ? 'draw_et' : saved.predicted_result,
+          scoreA: saved.predicted_score_a,
+          scoreB: saved.predicted_score_b,
+        }
+      }))
+      if (isDrawET) {
+        setPenaltyWinners(prev => ({ ...prev, [matchId]: saved.predicted_result }))
+      }
     }
   }
 
@@ -332,12 +369,19 @@ export default function Predict() {
       alert('Please select both a result and scoreline.')
       return
     }
+    // For draw_et: require penalty winner selection
+    if (pred.result === 'draw_et' && !penaltyWinners[match.id]) {
+      alert('Please select the penalty shootout winner.')
+      return
+    }
+    // Map draw_et to the actual predicted_result (penalty winner)
+    const predictedResult = pred.result === 'draw_et' ? penaltyWinners[match.id] : pred.result
     // Capture scroll position before any state updates
     const scrollY = window.scrollY
     setSaving(s => ({ ...s, [match.id]: true }))
     const { error } = await supabase.from('predictions').upsert({
       user_id: user.id, match_id: match.id,
-      predicted_result: pred.result,
+      predicted_result: predictedResult,
       predicted_score_a: pred.scoreA,
       predicted_score_b: pred.scoreB,
     }, { onConflict: 'user_id,match_id' })
@@ -345,7 +389,7 @@ export default function Predict() {
       // If the match is already completed, score the prediction immediately
       let scored = { is_result_correct: null, is_score_correct: null, points_earned: null }
       if (match.result) {
-        const rc = pred.result === match.result
+        const rc = predictedResult === match.result
         const sc = rc && pred.scoreA === match.score_a && pred.scoreB === match.score_b
         scored = {
           is_result_correct: rc,
@@ -357,10 +401,11 @@ export default function Predict() {
       }
       setSavedPredictions(prev => ({
         ...prev,
-        [match.id]: { predicted_result: pred.result, predicted_score_a: pred.scoreA, predicted_score_b: pred.scoreB, ...scored }
+        [match.id]: { predicted_result: predictedResult, predicted_score_a: pred.scoreA, predicted_score_b: pred.scoreB, ...scored }
       }))
       setEditing(prev => ({ ...prev, [match.id]: false }))
       setPredictions(prev => { const next = { ...prev }; delete next[match.id]; return next })
+      setPenaltyWinners(prev => { const next = { ...prev }; delete next[match.id]; return next })
       // Restore scroll position after React re-renders
       requestAnimationFrame(() => { window.scrollTo({ top: scrollY, behavior: 'instant' }) })
     }
@@ -453,6 +498,8 @@ export default function Predict() {
                     onScorelineChange={handleScorelineChange}
                     onSave={() => savePrediction(m)}
                     onEdit={handleEdit}
+                    penaltyWinner={penaltyWinners[m.id]}
+                    onPenaltyWinnerChange={handlePenaltyWinnerChange}
                   />
                 ))}
               </div>
@@ -516,6 +563,8 @@ export default function Predict() {
                         onScorelineChange={handleScorelineChange}
                         onSave={() => savePrediction(m)}
                         onEdit={handleEdit}
+                        penaltyWinner={penaltyWinners[m.id]}
+                        onPenaltyWinnerChange={handlePenaltyWinnerChange}
                       />
                     ))}
                   </div>
@@ -539,6 +588,8 @@ export default function Predict() {
                     onScorelineChange={handleScorelineChange}
                     onSave={() => savePrediction(m)}
                     onEdit={handleEdit}
+                    penaltyWinner={penaltyWinners[m.id]}
+                    onPenaltyWinnerChange={handlePenaltyWinnerChange}
                   />
                 ))}
               </div>
