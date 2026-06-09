@@ -1,3 +1,8 @@
+-- SUPERSEDED BY 005_fix_match_times.sql
+-- This migration used incorrect fixture data from the original worldcup2026-fixtures.json.
+-- Do NOT run on new databases. Use 005_fix_match_times.sql or supabase-schema.sql instead.
+-- Kept for historical reference only.
+
 -- 004_sync_fixtures.sql
 -- Update matches table with fixture data from worldcup2026-fixtures.json
 -- Generated from lib/data.js MATCHES array
