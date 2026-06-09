@@ -92,6 +92,11 @@ function MatchCard({ match, saved, localPred, isEditing, isSaving, onResultChang
           <span className="match-result-badge" style={{ fontSize: '1rem', padding: '0.3rem 1rem' }}>
             FT {match.score_a} – {match.score_b}
           </span>
+          {match.won_on_penalties && (
+            <div style={{ marginTop: '0.3rem', fontSize: '0.78rem', color: 'var(--gold)', fontWeight: 600 }}>
+              Won on penalties
+            </div>
+          )}
           {saved && (
             <div style={{ marginTop: '0.4rem', fontSize: '0.82rem', color: 'var(--gray-500)' }}>
               Your pick: {getResultLabel(saved.predicted_result, match.team_a, match.team_b)} {saved.predicted_score_a}–{saved.predicted_score_b}

@@ -49,6 +49,7 @@ export default function Leaderboard() {
 
     rows.sort((a, b) => {
       if (b.points !== a.points) return b.points - a.points
+      if (a.goldenBootCorrect !== b.goldenBootCorrect) return a.goldenBootCorrect ? -1 : 1
       if (b.correctScorelines !== a.correctScorelines) return b.correctScorelines - a.correctScorelines
       return b.correctResults - a.correctResults
     })

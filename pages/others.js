@@ -121,6 +121,7 @@ export default function Others() {
                   : <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.2rem', color: 'var(--gray-500)' }}>VS</div>
                 }
                 {isCompleted && <div style={{ fontSize: '0.75rem', color: 'var(--gray-500)', marginTop: '4px' }}>Final Score</div>}
+                {isCompleted && match.won_on_penalties && <div style={{ fontSize: '0.75rem', color: 'var(--gold)', fontWeight: 600, marginTop: '2px' }}>Won on penalties</div>}
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
                 <FlagImg team={match.team_b} size={40} />
@@ -240,6 +241,7 @@ export default function Others() {
                     </span>
                     <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
                       {isCompleted && <span className="match-result-badge">{match.score_a}–{match.score_b}</span>}
+                      {isCompleted && match.won_on_penalties && <span style={{ fontSize: '0.68rem', color: 'var(--gold)', fontWeight: 600 }}>pen</span>}
                       <span style={{ fontSize: '0.75rem', color: 'var(--gray-500)', background: 'rgba(255,255,255,0.06)', padding: '2px 8px', borderRadius: '99px' }}>
                         {totalPredictions}/{profiles.length} picks
                       </span>

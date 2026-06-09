@@ -33,6 +33,7 @@ create table public.matches (
   result text check (result in ('teamA', 'teamB', 'draw', null)),
   score_a integer,
   score_b integer,
+  won_on_penalties boolean default false,  -- true when knockout match decided by penalty shootout
   is_final boolean default false,  -- mark the Final match for special golden boot tiebreak
   created_at timestamp with time zone default timezone('utc', now())
 );

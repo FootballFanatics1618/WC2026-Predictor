@@ -30,6 +30,15 @@ const GROUP_TEAMS = {
   L:["England","Croatia","Ghana","Panama"],
 }
 
+function isPenaltyResult(result) {
+  return result === 'teamA_pen' || result === 'teamB_pen'
+}
+function baseResult(result) {
+  if (result === 'teamA_pen') return 'teamA'
+  if (result === 'teamB_pen') return 'teamB'
+  return result
+}
+
 function sortStandings(rows) {
   return [...rows].sort((a,b) => {
     if (b.points !== a.points) return b.points - a.points
@@ -192,15 +201,19 @@ export default function Admin() {
     const scoreA = parseInt(form.scoreA)
     const scoreB = parseInt(form.scoreB)
     const diff = scoreA - scoreB
+    const result = baseResult(form.result)
+    const wonOnPenalties = isPenaltyResult(form.result)
 
-    // Score-vs-result consistency check
-    if (form.result === 'teamA' && diff <= 0) { alert("Score doesn't match Team A win"); setSaving(s=>({...s,[match.id]:false})); return }
-    if (form.result === 'teamB' && diff >= 0) { alert("Score doesn't match Team B win"); setSaving(s=>({...s,[match.id]:false})); return }
-    if (form.result === 'draw' && diff !== 0) { alert("Score doesn't match Draw"); setSaving(s=>({...s,[match.id]:false})); return }
+    // Score-vs-result consistency check (skip for penalties — score is level after ET)
+    if (!wonOnPenalties) {
+      if (result === 'teamA' && diff <= 0) { alert("Score doesn't match Team A win"); setSaving(s=>({...s,[match.id]:false})); return }
+      if (result === 'teamB' && diff >= 0) { alert("Score doesn't match Team B win"); setSaving(s=>({...s,[match.id]:false})); return }
+      if (result === 'draw' && diff !== 0) { alert("Score doesn't match Draw"); setSaving(s=>({...s,[match.id]:false})); return }
+    }
 
     // ── 1. Save result to match row ──────────────────────────────────────────
     const { error: mErr } = await supabase.from('matches').update({
-      result: form.result, score_a: scoreA, score_b: scoreB,
+      result, score_a: scoreA, score_b: scoreB, won_on_penalties: wonOnPenalties,
     }).eq('id', match.id)
     if (mErr) {
       alert(`❌ Could not save result.\n\n${mErr.message}\n\nCheck that admin-rls-fix.sql has been run in Supabase.`)
@@ -212,7 +225,7 @@ export default function Admin() {
     const { data: preds } = await supabase.from('predictions').select('*').eq('match_id', match.id)
     let scoredCount = 0
     for (const pred of (preds || [])) {
-      const rc = pred.predicted_result === form.result
+      const rc = pred.predicted_result === result
       const sc = rc && pred.predicted_score_a === scoreA && pred.predicted_score_b === scoreB
       const { error: uErr } = await supabase.from('predictions').update({
         is_result_correct: rc, is_score_correct: sc, points_earned: sc ? 5 : rc ? 3 : 0,
@@ -223,21 +236,20 @@ export default function Admin() {
     // ── 3. Update group standings ──────────────────────────────────────────────
     if (match.stage === 'Group Stage' && match.group_name) {
       if (isEdit && match.result !== null) {
-        // Reverse the old result first, then apply the new one
         const sErr = await updateGroupStandings(
-          match, form.result, scoreA, scoreB,
+          match, result, scoreA, scoreB,
           match.result, match.score_a, match.score_b   // old values to reverse
         )
         if (sErr) console.error('Standings edit failed:', sErr)
       } else {
-        const sErr = await updateGroupStandings(match, form.result, scoreA, scoreB)
+        const sErr = await updateGroupStandings(match, result, scoreA, scoreB)
         if (sErr) console.error('Standings update failed:', sErr)
       }
     }
 
     // ── 4. Knockout progression (only for new saves, not edits) ────────────────
     if (!isEdit && match.stage !== 'Group Stage') {
-      await resolveKnockoutProgression(match, form.result)
+      await resolveKnockoutProgression(match, result)
     }
 
     // ── 5. After all 72 group games, propagate winners to R32 ───────────────
@@ -247,7 +259,7 @@ export default function Admin() {
       if (groupDone === 72) await propagateAllGroupWinners(freshMatches || [])
     }
 
-    setMessage(`✅ ${match.team_a} ${scoreA}–${scoreB} ${match.team_b} ${isEdit ? 'updated' : 'saved'}! ${scoredCount}/${preds?.length || 0} predictions scored.`)
+    setMessage(`✅ ${match.team_a} ${scoreA}–${scoreB} ${match.team_b}${wonOnPenalties ? ' (penalties)' : ''} ${isEdit ? 'updated' : 'saved'}! ${scoredCount}/${preds?.length || 0} predictions scored.`)
     await Promise.all([loadMatches(), loadStandings()])
     setSaving(s => ({ ...s, [match.id]: false }))
     setShowCompleted(true)
@@ -259,7 +271,7 @@ export default function Admin() {
 
     // 1. Clear match result
     const { error: mErr } = await supabase.from('matches').update({
-      result: null, score_a: null, score_b: null,
+      result: null, score_a: null, score_b: null, won_on_penalties: false,
     }).eq('id', match.id)
     if (mErr) {
       alert(`❌ Could not reset result.\n\n${mErr.message}`)
@@ -890,6 +902,8 @@ export default function Admin() {
                           <option value="teamA">{match.team_a} Win</option>
                           {match.stage === 'Group Stage' && <option value="draw">Draw</option>}
                           <option value="teamB">{match.team_b} Win</option>
+                          {match.stage !== 'Group Stage' && <option value="teamA_pen">{match.team_a} Win (penalties)</option>}
+                          {match.stage !== 'Group Stage' && <option value="teamB_pen">{match.team_b} Win (penalties)</option>}
                         </select>
 
                         <div style={{display:'flex',alignItems:'center',gap:'0.4rem'}}>
@@ -974,6 +988,7 @@ export default function Admin() {
                             </div>
                             <div style={{display:'flex',alignItems:'center',gap:'0.5rem'}}>
                               <span className="match-result-badge">{m.score_a}–{m.score_b}</span>
+                              {m.won_on_penalties && <span style={{fontSize:'0.72rem',color:'var(--gold)',fontWeight:600}}>Won on penalties</span>}
                               {!isEditing && (
                                 <>
                                   <button
@@ -983,7 +998,9 @@ export default function Admin() {
                                       setResultForm(prev => ({
                                         ...prev,
                                         [m.id]: {
-                                          result: m.result,
+                                          result: m.won_on_penalties
+                                            ? (m.result === 'teamA' ? 'teamA_pen' : 'teamB_pen')
+                                            : m.result,
                                           scoreA: String(m.score_a),
                                           scoreB: String(m.score_b),
                                         }
@@ -1030,6 +1047,8 @@ export default function Admin() {
                                 <option value="teamA">{m.team_a} Win</option>
                                 {m.stage==='Group Stage' && <option value="draw">Draw</option>}
                                 <option value="teamB">{m.team_b} Win</option>
+                                {m.stage!=='Group Stage' && <option value="teamA_pen">{m.team_a} Win (penalties)</option>}
+                                {m.stage!=='Group Stage' && <option value="teamB_pen">{m.team_b} Win (penalties)</option>}
                               </select>
                               <div style={{display:'flex',alignItems:'center',gap:'0.4rem'}}>
                                 <input
