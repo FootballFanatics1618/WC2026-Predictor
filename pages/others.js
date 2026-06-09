@@ -3,8 +3,12 @@ import { useRouter } from 'next/router'
 import Navbar from '../components/Navbar'
 import FlagImg from '../components/FlagImg'
 import { supabase } from '../lib/supabase'
-import { toIST } from '../lib/flags'
+import { toIST, toISTFull } from '../lib/flags'
 import { format, parseISO, isToday, isBefore, startOfDay } from 'date-fns'
+
+const ADMIN_EMAILS = process.env.NEXT_PUBLIC_ADMIN_EMAILS
+  ? process.env.NEXT_PUBLIC_ADMIN_EMAILS.split(',').map(e => e.trim())
+  : []
 
 export default function Others() {
   const router = useRouter()
@@ -23,6 +27,7 @@ export default function Others() {
   async function init() {
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) { router.push('/login'); return }
+    if (!ADMIN_EMAILS.includes(session.user.email)) { router.replace('/'); return }
     setUser(session.user)
     setMyId(session.user.id)
 
@@ -89,7 +94,12 @@ export default function Others() {
             <button onClick={() => { setSelectedDate(null); setSelectedMatch(null) }} style={{ background: 'none', border: 'none', color: 'var(--gray-500)', cursor: 'pointer', padding: 0 }}>Others' Picks</button>
             <span>›</span>
             <button onClick={() => setSelectedMatch(null)} style={{ background: 'none', border: 'none', color: 'var(--gray-500)', cursor: 'pointer', padding: 0 }}>
-              {isToday(parseISO(match.match_date)) ? 'Today' : format(parseISO(match.match_date), 'EEE, MMM d')}
+              {(() => {
+                const { dayOffset } = toISTFull(match.match_time)
+                const baseDate = parseISO(match.match_date)
+                const istDate = dayOffset ? new Date(baseDate.getTime() + 86400000) : baseDate
+                return isToday(istDate) ? 'Today' : format(istDate, 'EEE, MMM d')
+              })()}
             </button>
             <span>›</span>
             <span style={{ color: 'var(--white)' }}>{match.team_a} vs {match.team_b}</span>

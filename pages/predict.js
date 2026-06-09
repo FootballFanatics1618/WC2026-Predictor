@@ -5,10 +5,10 @@ import Navbar from '../components/Navbar'
 import FlagImg from '../components/FlagImg'
 import { supabase } from '../lib/supabase'
 import { generateScorelines, TOURNAMENT_START } from '../lib/data'
-import { toIST } from '../lib/flags'
+import { toISTFull, matchISTDate, todayIST } from '../lib/flags'
 import { isMatchPredictionLocked, timeUntilLock } from '../lib/locktime'
 import { useDragScroll } from '../hooks/useDragScroll'
-import { format, parseISO, isToday, isBefore, startOfDay } from 'date-fns'
+import { format, parseISO } from 'date-fns'
 
 function isMatchCompleted(match) { return match.result !== null }
 
@@ -48,7 +48,12 @@ function MatchCard({ match, saved, localPred, isEditing, isSaving, onResultChang
             {match.stage}{match.group_name ? ` · Group ${match.group_name}` : ''}
           </span>
           <div style={{ fontSize: '0.78rem', color: 'var(--gray-500)', marginTop: '0.1rem', lineHeight: 1.4 }}>
-            {format(parseISO(match.match_date), 'EEE, MMM d')} · {toIST(match.match_time)}
+            {(() => {
+              const { time: istTime, dayOffset } = toISTFull(match.match_time)
+              const baseDate = parseISO(match.match_date)
+              const istDate = dayOffset ? new Date(baseDate.getTime() + 86400000) : baseDate
+              return `${format(istDate, 'EEE, MMM d')} · ${istTime}`
+            })()}
           </div>
           <div style={{ fontSize: '0.72rem', color: 'var(--gray-500)' }}>{match.venue}</div>
         </div>
@@ -257,25 +262,37 @@ export default function Predict() {
     if (router.query.welcome) setMessage("🎉 Welcome! Now predict today's matches!")
   }
 
-  // A match is in "past days" if its date is strictly before today
-  function isPastDay(match) {
-    return isBefore(startOfDay(parseISO(match.match_date)), startOfDay(new Date()))
-  }
-  function isMatchToday(match) { return isToday(parseISO(match.match_date)) }
+  // ── IST-aware date categorisation ─────────────────────────────────────────
+  // match_date in DB is the ET calendar date.  Indian users live in IST (UTC+5:30)
+  // so a match at "2026-06-11 22:00 ET" kicks off at 2026-06-12 07:30 IST —
+  // it must appear under 12 Jun IST, not 11 Jun.
+  // We compute the IST calendar date of each match and compare to today-in-IST.
 
-  // Tabs:
-  // Today: matches today
-  // Upcoming: future dates (not today)
-  // Completed: matches with result entered
-  const todayMatches = matches.filter(m => isMatchToday(m))
-  const upcomingMatches = matches.filter(m => !isMatchToday(m) && !isPastDay(m))
-  // Completed = has a result
+  const istToday = todayIST()   // "YYYY-MM-DD" in IST
+
+  function getMatchISTDate(match) {
+    return matchISTDate(match.match_date, match.match_time)
+  }
+  function isMatchToday(match) {
+    return getMatchISTDate(match) === istToday
+  }
+  function isPastDay(match) {
+    return getMatchISTDate(match) < istToday
+  }
+
+  // Today:     IST kickoff date == today IST (regardless of result)
+  // Upcoming:  IST kickoff date > today IST AND no result yet
+  // Completed: result has been entered (any date)
+  const todayMatches    = matches.filter(m => isMatchToday(m))
+  const upcomingMatches = matches.filter(m => !isMatchToday(m) && !isPastDay(m) && !isMatchCompleted(m))
   const completedMatches = matches.filter(m => isMatchCompleted(m))
 
+  // Group upcoming by IST date for the date-chip strip
   const upcomingByDate = {}
   upcomingMatches.forEach(m => {
-    if (!upcomingByDate[m.match_date]) upcomingByDate[m.match_date] = []
-    upcomingByDate[m.match_date].push(m)
+    const istDate = getMatchISTDate(m)
+    if (!upcomingByDate[istDate]) upcomingByDate[istDate] = []
+    upcomingByDate[istDate].push(m)
   })
   const upcomingDates = Object.keys(upcomingByDate).sort()
 
@@ -395,7 +412,7 @@ export default function Predict() {
               isGbLocked
                 ? <span className="lock-chip">🔒 Locked</span>
                 : <div style={{ fontSize: '0.75rem', color: '#f6ad55', background: 'rgba(246,173,85,0.12)', padding: '2px 8px', borderRadius: '99px', display: 'inline-block' }}>
-                    ⚠️ Freezes Jun 10, 11:30 PM IST — 1hr before tournament
+                    ⚠️ Freezes Jun 11, 11:30 PM IST — 1hr before kick-off
                   </div>
             )}
           </div>
