@@ -443,7 +443,7 @@ export default function Predict() {
           </div>
         )}
 
-        <div style={{ fontWeight: 700, color: 'var(--gold)', marginBottom: '1.25rem', maxWidth: '700px', margin: '0 auto 1.25rem' }}>👋 {profile.username}</div>
+        {profile && <div style={{ fontWeight: 700, color: 'var(--gold)', marginBottom: '1.25rem', maxWidth: '700px', margin: '0 auto 1.25rem' }}>👋 {profile.username}</div>}
         {profile && (
           <div className="card-gold" style={{ maxWidth: '700px', margin: '0 auto 1.5rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.75rem' }}>
