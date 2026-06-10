@@ -1,10 +1,9 @@
-const CACHE_NAME = 'wc2026-v1'
+const CACHE_NAME = 'wc2026-v2'
 const PRECACHE_URLS = [
   '/',
   '/predict',
   '/golden-boot',
   '/leaderboard',
-  '/others',
   '/login',
   '/signup',
   '/icon-192.png',
