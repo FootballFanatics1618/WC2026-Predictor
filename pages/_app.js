@@ -6,6 +6,11 @@ export default function App({ Component, pageProps }) {
   useEffect(() => {
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js').catch(() => {})
+      navigator.serviceWorker.addEventListener('message', (event) => {
+        if (event.data && event.data.type === 'SW_UPDATED') {
+          window.location.reload()
+        }
+      })
     }
   }, [])
 
