@@ -1,4 +1,4 @@
-const CACHE_NAME = 'wc2026-v2'
+const CACHE_NAME = 'wc2026-v3'
 const PRECACHE_URLS = [
   '/',
   '/predict',
@@ -44,14 +44,15 @@ self.addEventListener('message', (event) => {
 self.addEventListener('fetch', (event) => {
   const { request } = event
 
-  // Skip non-GET and API requests
   if (request.method !== 'GET' || request.url.includes('/api/') || request.url.includes('supabase')) {
     return
   }
 
-  event.respondWith(
-    caches.match(request).then((cached) => {
-      const fetchPromise = fetch(request)
+  const isNavigation = request.mode === 'navigate'
+
+  if (isNavigation) {
+    event.respondWith(
+      fetch(request)
         .then((response) => {
           if (response.ok) {
             const clone = response.clone()
@@ -59,9 +60,23 @@ self.addEventListener('fetch', (event) => {
           }
           return response
         })
-        .catch(() => cached)
+        .catch(() => caches.match(request))
+    )
+  } else {
+    event.respondWith(
+      caches.match(request).then((cached) => {
+        const fetchPromise = fetch(request)
+          .then((response) => {
+            if (response.ok) {
+              const clone = response.clone()
+              caches.open(CACHE_NAME).then((cache) => cache.put(request, clone))
+            }
+            return response
+          })
+          .catch(() => cached)
 
-      return cached || fetchPromise
-    })
-  )
+        return cached || fetchPromise
+      })
+    )
+  }
 })
