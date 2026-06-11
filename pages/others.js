@@ -108,7 +108,7 @@ export default function Others() {
           {/* Match header */}
           <div className="card-gold" style={{ marginBottom: '1.5rem' }}>
             <div style={{ fontSize: '0.72rem', color: 'var(--gray-500)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.75rem' }}>
-              {match.stage}{match.group_name ? ` · Group ${match.group_name}` : ''} · {toIST(match.match_time)} · {match.venue}
+              {match.stage}{match.group_name ? ` · Group ${match.group_name}` : ''} · {toIST(match.match_time, match.kickoff_utc)} · {match.venue}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '1.5rem', flexWrap: 'wrap' }}>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
@@ -237,7 +237,7 @@ export default function Others() {
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.6rem', flexWrap: 'wrap', gap: '0.5rem' }}>
                     <span style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--gray-500)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                      {match.stage}{match.group_name ? ` · Group ${match.group_name}` : ''} · {toIST(match.match_time)}
+                      {match.stage}{match.group_name ? ` · Group ${match.group_name}` : ''} · {toIST(match.match_time, match.kickoff_utc)}
                     </span>
                     <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
                       {isCompleted && <span className="match-result-badge">{match.score_a}–{match.score_b}</span>}

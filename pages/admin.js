@@ -6,7 +6,7 @@ import FlagImg from '../components/FlagImg'
 import { supabase } from '../lib/supabase'
 import { ALL_PLAYERS } from '../lib/data'
 import { useDragScroll } from '../hooks/useDragScroll'
-import { toIST, toISTFull, matchISTDate, todayIST } from '../lib/flags'
+import { toIST, getISTDate, matchISTDate, todayIST } from '../lib/flags'
 import { format, parseISO, formatDistanceToNow } from 'date-fns'
 
 const ADMIN_EMAILS = process.env.NEXT_PUBLIC_ADMIN_EMAILS
@@ -523,22 +523,14 @@ export default function Admin() {
   const stageMatches = matches.filter(m => m.stage === activeStage)
   const totalDone = matches.filter(m => m.result !== null).length
 
-  // Build IST-date → [matches] map for the active stage
-  const stageByISTDate = {}
-  stageMatches.forEach(m => {
-    const istDate = matchISTDate(m.match_date, m.match_time)
-    if (!stageByISTDate[istDate]) stageByISTDate[istDate] = []
-    stageByISTDate[istDate].push(m)
-  })
-  const stageDates = Object.keys(stageByISTDate).sort()   // IST date strings
+  const stageDates = [...new Set(stageMatches.map(m => getISTDate(m.kickoff_utc)))].sort()
 
   // Auto-select the first IST date in this stage when the stage changes
   const activeDayDate = selectedDay && stageDates.includes(selectedDay)
     ? selectedDay
     : stageDates[0] || null
 
-  // Matches on the selected IST day
-  const dayMatches = stageByISTDate[activeDayDate] || []
+  const dayMatches = stageMatches.filter(m => getISTDate(m.kickoff_utc) === activeDayDate)
   const pendingOnDay = dayMatches.filter(m => m.result === null)
   const completedOnDay = dayMatches.filter(m => m.result !== null)
 
@@ -798,9 +790,7 @@ export default function Admin() {
               <div style={{marginBottom:'1.5rem'}}>
                 <div ref={dayScrollRef} className="scroll-row">
                   {stageDates.map(istDateStr => {
-                    // stageDates are IST date strings; stageByISTDate groups matches by IST date
-                    const matchesOnDay = stageByISTDate[istDateStr] || []
-                    const pendingCount = matchesOnDay.filter(m => m.result === null).length
+                    const pendingCount = stageMatches.filter(m => getISTDate(m.kickoff_utc)===istDateStr && m.result===null).length
                     const allDone = pendingCount === 0
                     const isActive = activeDayDate === istDateStr
                     const isToday = istDateStr === todayIST()
@@ -876,7 +866,7 @@ export default function Admin() {
                           <span style={{display:'inline-flex',alignItems:'center',gap:'6px'}}><FlagImg team={match.team_b} size={20} />{match.team_b}</span>
                         </div>
                         <div style={{fontSize:'0.75rem',color:'var(--gray-500)'}}>
-                          {format(parseISO(matchISTDate(match.match_date, match.match_time)), 'EEE, MMM d')} · {toIST(match.match_time)}
+                          {toIST(match.match_time, match.kickoff_utc)}
                           {match.group_name ? ` · Group ${match.group_name}` : ''}
                           {isKnockout && !bothKnown && (
                             <span style={{color:'var(--gold)',marginLeft:'0.5rem'}}>⏳ Awaiting group results</span>
@@ -984,7 +974,7 @@ export default function Admin() {
                               <span style={{display:'inline-flex',alignItems:'center',gap:'4px',fontSize:'0.88rem',fontWeight:500}}><FlagImg team={m.team_a} size={18} />{m.team_a}</span>
                               <span style={{color:'var(--gray-500)',fontSize:'0.8rem'}}>vs</span>
                               <span style={{display:'inline-flex',alignItems:'center',gap:'4px',fontSize:'0.88rem',fontWeight:500}}><FlagImg team={m.team_b} size={18} />{m.team_b}</span>
-                              <span style={{fontSize:'0.73rem',color:'var(--gray-500)',marginLeft:'0.5rem'}}>{format(parseISO(matchISTDate(m.match_date, m.match_time)), 'MMM d')} · {toIST(m.match_time)}</span>
+                              <span style={{fontSize:'0.73rem',color:'var(--gray-500)',marginLeft:'0.5rem'}}>{toIST(m.match_time, m.kickoff_utc)}</span>
                             </div>
                             <div style={{display:'flex',alignItems:'center',gap:'0.5rem'}}>
                               <span className="match-result-badge">{m.score_a}–{m.score_b}</span>

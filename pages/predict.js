@@ -5,7 +5,7 @@ import Navbar from '../components/Navbar'
 import FlagImg from '../components/FlagImg'
 import { supabase } from '../lib/supabase'
 import { generateScorelines, TOURNAMENT_START } from '../lib/data'
-import { toISTFull, matchISTDate, todayIST } from '../lib/flags'
+import { toIST, isISTToday, isISTPastDay, getISTDate } from '../lib/flags'
 import { isMatchPredictionLocked, timeUntilLock } from '../lib/locktime'
 import { useDragScroll } from '../hooks/useDragScroll'
 import { format, parseISO } from 'date-fns'
@@ -53,12 +53,7 @@ function MatchCard({ match, saved, localPred, isEditing, isSaving, onResultChang
             {match.stage}{match.group_name ? ` · Group ${match.group_name}` : ''}
           </span>
           <div style={{ fontSize: '0.78rem', color: 'var(--gray-500)', marginTop: '0.1rem', lineHeight: 1.4 }}>
-            {(() => {
-              const { time: istTime, dayOffset } = toISTFull(match.match_time)
-              const baseDate = parseISO(match.match_date)
-              const istDate = dayOffset ? new Date(baseDate.getTime() + 86400000) : baseDate
-              return `${format(istDate, 'EEE, MMM d')} · ${istTime}`
-            })()}
+            {toIST(match.match_time, match.kickoff_utc)}
           </div>
           <div style={{ fontSize: '0.72rem', color: 'var(--gray-500)' }}>{match.venue}</div>
         </div>
@@ -190,7 +185,7 @@ export default function Predict() {
   const [savedPredictions, setSavedPredictions] = useState({})
   const [saving, setSaving] = useState({})
   const [editing, setEditing] = useState({})
-  const [tab, setTab] = useState('today')
+  const [tab, setTab] = useState('upcoming')
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
   const [selectedUpcomingDate, setSelectedUpcomingDate] = useState(null)
@@ -280,6 +275,12 @@ export default function Predict() {
     ])
 
     setProfile(profileRes.data)
+    if (!profileRes.data) {
+      // Profile doesn't exist — create one
+      await supabase.from('profiles').upsert({ id: session.user.id, username: session.user.email?.split('@')[0] || 'user' })
+      const { data: newProfile } = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
+      setProfile(newProfile)
+    }
     setMatches(matchesRes.data || [])
     const predsMap = {}
     ;(predsRes.data || []).forEach(p => { predsMap[p.match_id] = p })
@@ -288,35 +289,18 @@ export default function Predict() {
     if (router.query.welcome) setMessage("🎉 Welcome! Now predict today's matches!")
   }
 
-  // ── IST-aware date categorisation ─────────────────────────────────────────
-  // match_date in DB is the ET calendar date.  Indian users live in IST (UTC+5:30)
-  // so a match at "2026-06-11 22:00 ET" kicks off at 2026-06-12 07:30 IST —
-  // it must appear under 12 Jun IST, not 11 Jun.
-  // We compute the IST calendar date of each match and compare to today-in-IST.
-
-  const istToday = todayIST()   // "YYYY-MM-DD" in IST
-
-  function getMatchISTDate(match) {
-    return matchISTDate(match.match_date, match.match_time)
-  }
-  function isMatchToday(match) {
-    return getMatchISTDate(match) === istToday
-  }
-  function isPastDay(match) {
-    return getMatchISTDate(match) < istToday
-  }
-
-  // Today:     IST kickoff date == today IST (regardless of result)
-  // Upcoming:  IST kickoff date > today IST AND no result yet
-  // Completed: result has been entered (any date)
-  const todayMatches    = matches.filter(m => isMatchToday(m))
-  const upcomingMatches = matches.filter(m => !isMatchToday(m) && !isPastDay(m) && !isMatchCompleted(m))
+  // Tabs (IST-based):
+  // Today: matches whose IST date is today
+  // Upcoming: future IST dates (not today)
+  // Completed: matches with result entered
+  const todayMatches = matches.filter(m => isISTToday(m))
+  const upcomingMatches = matches.filter(m => !isISTToday(m) && !isISTPastDay(m))
   const completedMatches = matches.filter(m => isMatchCompleted(m))
 
   // Group upcoming by IST date for the date-chip strip
   const upcomingByDate = {}
   upcomingMatches.forEach(m => {
-    const istDate = getMatchISTDate(m)
+    const istDate = getISTDate(m.kickoff_utc)
     if (!upcomingByDate[istDate]) upcomingByDate[istDate] = []
     upcomingByDate[istDate].push(m)
   })
@@ -462,7 +446,7 @@ export default function Predict() {
               isGbLocked
                 ? <span className="lock-chip">🔒 Locked</span>
                 : <div style={{ fontSize: '0.75rem', color: '#f6ad55', background: 'rgba(246,173,85,0.12)', padding: '2px 8px', borderRadius: '99px', display: 'inline-block' }}>
-                    ⚠️ Freezes Jun 11, 11:30 PM IST — 1hr before kick-off
+                    ⚠️ Freezes Jun 11, 11:30 PM IST — 1hr before tournament
                   </div>
             )}
           </div>
