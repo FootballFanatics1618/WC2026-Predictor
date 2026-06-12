@@ -21,6 +21,12 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const API_BASE = 'https://worldcup26.ir/get'
 
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+}
+
 // Supabase client using service role — bypasses RLS entirely
 const supabase = createClient(
   Deno.env.get('SUPABASE_URL')!,
@@ -32,14 +38,12 @@ const supabase = createClient(
 
 interface ApiMatch {
   id: string | number
-  status?: string
-  state?: string
-  home_score?: number | null
-  away_score?: number | null
-  homeScore?: number | null
-  awayScore?: number | null
-  score?: { home?: number; away?: number }
-  winner?: string   // 'home' | 'away' | 'draw' | null
+  finished: string       // "TRUE" | "FALSE"
+  time_elapsed: string   // "finished" | "not started" | time string
+  home_score: string | number
+  away_score: string | number
+  home_team_name_en: string
+  away_team_name_en: string
 }
 
 interface DbMatch {
@@ -55,14 +59,15 @@ interface DbMatch {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function extractScore(m: ApiMatch): { home: number | null; away: number | null } {
-  const home = m.home_score ?? m.homeScore ?? m.score?.home ?? null
-  const away = m.away_score ?? m.awayScore ?? m.score?.away ?? null
+  const home = m.home_score != null ? Number(m.home_score) : null
+  const away = m.away_score != null ? Number(m.away_score) : null
   return { home, away }
 }
 
 function isFinished(m: ApiMatch): boolean {
-  const s = (m.status ?? m.state ?? '').toLowerCase()
-  return s.includes('finish') || s.includes('ft') || s.includes('full') || s === 'completed'
+  if (m.finished === 'TRUE') return true
+  const t = (m.time_elapsed ?? '').toLowerCase()
+  return t.includes('finished') || t.includes('ft')
 }
 
 function deriveResult(home: number, away: number): 'teamA' | 'teamB' | 'draw' {
@@ -74,6 +79,10 @@ function deriveResult(home: number, away: number): 'teamA' | 'teamB' | 'draw' {
 // ─── Main handler ─────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers: CORS_HEADERS })
+  }
+
   const source = new URL(req.url).searchParams.get('source') ?? 'cron'
   const log = { matched: 0, updated: 0, scored: 0, errors: [] as string[] }
 
@@ -100,7 +109,8 @@ Deno.serve(async (req) => {
     // ── Step 2: Fetch all matches from API ───────────────────────────────────
     const apiRes = await fetch(`${API_BASE}/games`)
     if (!apiRes.ok) throw new Error(`API error: ${apiRes.status}`)
-    const apiMatches: ApiMatch[] = await apiRes.json()
+    const apiData = await apiRes.json()
+    const apiMatches: ApiMatch[] = apiData.games ?? []
 
     // Build a quick lookup: api_id (string) → api match
     // The API id field may match our DB id directly — depends on the API
@@ -120,7 +130,7 @@ Deno.serve(async (req) => {
       }
 
       if (!isFinished(apiMatch)) {
-        console.log(`[sync-scores] Match ${dbMatch.id} not yet finished (status: ${apiMatch.status})`)
+        console.log(`[sync-scores] Match ${dbMatch.id} not yet finished (status: ${apiMatch.time_elapsed})`)
         continue
       }
 
@@ -236,6 +246,6 @@ async function writeLog(checked: number, updated: number, errors: string | null,
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
   })
 }
