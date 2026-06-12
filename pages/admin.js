@@ -170,7 +170,9 @@ export default function Admin() {
         }
       )
       const result = await res.json()
-      if (result.error) {
+      if (!res.ok) {
+        setMessage(`❌ Sync failed: ${result.message || result.error || `HTTP ${res.status}`}`)
+      } else if (result.error) {
         setMessage(`❌ Sync failed: ${result.error}`)
       } else {
         setMessage(
