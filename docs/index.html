@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>WC2026 Insights</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23f5c842' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='12' width='4' height='9' rx='1'/%3E%3Crect x='10' y='7' width='4' height='14' rx='1'/%3E%3Crect x='17' y='3' width='4' height='18' rx='1'/%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -406,15 +407,23 @@
     .histogram {
       display: flex;
       align-items: flex-end;
-      gap: 6px;
-      height: 200px;
+      gap: 0;
+      height: 250px;
       padding: 0 0.5rem;
       margin-top: 1rem;
     }
 
+    .histogram-bar-wrap {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
     .histogram-bar {
-      width: 100%;
-      max-width: 50px;
+      width: 80%;
+      max-width: 120px;
       background: var(--gold);
       border-radius: 4px 4px 0 0;
       min-height: 2px;
@@ -477,10 +486,6 @@
       letter-spacing: 0.06em;
       color: var(--gray-500);
       margin-top: 0.5rem;
-    }
-
-    .histogram-bar-wrap {
-      position: relative;
     }
 
     [data-tooltip] {
@@ -560,6 +565,75 @@
     .accuracy-predictions {
       font-size: 0.75rem;
       color: var(--gray-500);
+    }
+
+    .stage-chip {
+      display: inline-block;
+      padding: 0.15rem 0.5rem;
+      border-radius: 99px;
+      font-size: 0.65rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-right: 0.3rem;
+      margin-bottom: 0.2rem;
+    }
+
+    .stage-chip.result-chip {
+      background: rgba(49,130,206,0.15);
+      border: 1px solid rgba(49,130,206,0.35);
+      color: #63b3ed;
+    }
+
+    .stage-chip.score-chip {
+      background: rgba(245,200,66,0.15);
+      border: 1px solid rgba(245,200,66,0.3);
+      color: var(--gold);
+    }
+
+    .stage-toggle {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+    }
+
+    .stage-toggle-btn {
+      padding: 0.5rem 1rem;
+      border-radius: var(--radius);
+      border: 1px solid rgba(255,255,255,0.12);
+      background: transparent;
+      color: var(--gray-500);
+      font-family: var(--font-body);
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .stage-toggle-btn:hover {
+      border-color: rgba(255,255,255,0.3);
+      color: var(--white);
+    }
+
+    .stage-toggle-btn.active {
+      background: var(--gold);
+      color: var(--gray-900);
+      border-color: var(--gold);
+    }
+
+    .section-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      margin-top: 2.5rem;
+    }
+
+    .section-header-text {
+      flex: 1;
+    }
+
+    .section-header .section-title {
+      margin-top: 0;
     }
 
     .gb-bar-row {
@@ -698,6 +772,34 @@
           } catch (e) {
             btn.textContent = '\u2717'
             setTimeout(function() { btn.textContent = '\u{1F4CB}' }, 1500)
+          }
+        }, 'image/png')
+      })
+    }
+
+    function copySectionToPng(btn, sectionId) {
+      var section = document.getElementById(sectionId)
+      if (!section) return
+      var originalText = btn.textContent
+      html2canvas(section, { backgroundColor: '#1a1a16', scale: 4, useCORS: true }).then(function(canvas) {
+        canvas.toBlob(function(blob) {
+          try {
+            navigator.clipboard.write([
+              new ClipboardItem({ 'image/png': blob })
+            ]).then(function() {
+              btn.textContent = '\u2713'
+              btn.classList.add('copied')
+              setTimeout(function() {
+                btn.textContent = '\u{1F4CB}'
+                btn.classList.remove('copied')
+              }, 2000)
+            }).catch(function() {
+              btn.textContent = '\u2717'
+              setTimeout(function() { btn.textContent = originalText }, 1500)
+            })
+          } catch (e) {
+            btn.textContent = '\u2717'
+            setTimeout(function() { btn.textContent = originalText }, 1500)
           }
         }, 'image/png')
       })
@@ -1037,6 +1139,7 @@
       }
 
       // ========== 2. UPSET TRACKER ==========
+      html += '<div id="section-upset">'
       html += '<h2 class="section-title">Upset Tracker</h2>'
       html += '<p class="section-subtitle">Matches where the majority got it wrong</p>'
 
@@ -1076,8 +1179,11 @@
         }
         html += '</div>'
       }
+      html += '<div style="text-align:right;margin-top:0.5rem"><button class="copy-btn" onclick="copySectionToPng(this, \'section-upset\')" title="Copy as PNG">\u{1F4CB}</button></div>'
+      html += '</div>'
 
       // ========== 3. POINTS DISTRIBUTION ==========
+      html += '<div id="section-points">'
       html += '<h2 class="section-title">Points Distribution</h2>'
       html += '<p class="section-subtitle">How many users fall in each point range — taller bars mean more users scored in that range. Hover a bar for details.</p>'
 
@@ -1111,7 +1217,7 @@
         html += '<div class="histogram">'
         for (var h = 0; h < buckets.length; h++) {
           var b = buckets[h]
-          var barHeight = Math.max((b.count / maxCount) * 180, 2)
+          var barHeight = Math.max((b.count / maxCount) * 220, 2)
           html += '<div class="histogram-bar-wrap">'
           html += '<div class="histogram-count">' + (b.count || '') + '</div>'
           html += '<div class="histogram-bar" style="height:' + barHeight + 'px" data-tooltip="' + b.count + ' users scored ' + b.label + ' pts"></div>'
@@ -1123,12 +1229,16 @@
         html += '</div>'
         html += '<div class="histogram-annotations">'
         html += '<div>Total users: <span>' + leaderboard.length + '</span></div>'
+        html += '<div>Average: <span>' + (allPts.length > 0 ? Math.round(allPts.reduce(function(a,b){return a+b},0)/allPts.length) : 0) + ' pts</span></div>'
         html += '<div>Median: <span>' + median + ' pts</span></div>'
         html += '<div>Top score: <span>' + maxPts + ' pts</span></div>'
         html += '</div></div>'
       }
+      html += '<div style="text-align:right;margin-top:0.5rem"><button class="copy-btn" onclick="copySectionToPng(this, \'section-points\')" title="Copy as PNG">\u{1F4CB}</button></div>'
+      html += '</div>'
 
       // ========== 4. ACCURACY OVER TIME ==========
+      html += '<div id="section-accuracy">'
       html += '<h2 class="section-title">Accuracy Over Time</h2>'
       html += '<p class="section-subtitle">Are users getting better as the tournament progresses?</p>'
 
@@ -1163,8 +1273,11 @@
         }
         html += '</tbody></table></div></div>'
       }
+      html += '<div style="text-align:right;margin-top:0.5rem"><button class="copy-btn" onclick="copySectionToPng(this, \'section-accuracy\')" title="Copy as PNG">\u{1F4CB}</button></div>'
+      html += '</div>'
 
       // ========== 5. GOLDEN BOOT BUZZ ==========
+      html += '<div id="section-golden-boot">'
       html += '<h2 class="section-title">Golden Boot Buzz</h2>'
       html += '<p class="section-subtitle">Most popular Golden Boot picks across the league</p>'
 
@@ -1201,8 +1314,11 @@
         html += '<div>Unique players chosen: <strong>' + sorted.length + '</strong></div>'
         html += '</div>'
       }
+      html += '<div style="text-align:right;margin-top:0.5rem"><button class="copy-btn" onclick="copySectionToPng(this, \'section-golden-boot\')" title="Copy as PNG">\u{1F4CB}</button></div>'
+      html += '</div>'
 
       // ========== 6. STAGE BREAKDOWN ==========
+      html += '<div id="section-stage-breakdown">'
       html += '<h2 class="section-title">Stage Breakdown</h2>'
       html += '<p class="section-subtitle">Accuracy per user across tournament stages</p>'
 
@@ -1214,10 +1330,11 @@
         if (!userStageData[uid]) userStageData[uid] = { username: usernameMap[uid] || uid.slice(0, 8), stages: {} }
         var stage = pp.matches.stage
         if (!userStageData[uid].stages[stage]) {
-          userStageData[uid].stages[stage] = { correct: 0, total: 0 }
+          userStageData[uid].stages[stage] = { correct: 0, scoreCorrect: 0, total: 0 }
         }
         userStageData[uid].stages[stage].total++
         if (pp.is_result_correct) userStageData[uid].stages[stage].correct++
+        if (pp.is_score_correct) userStageData[uid].stages[stage].scoreCorrect++
       }
 
       var stageOrder = ['Group Stage', 'Round of 32', 'Round of 16', 'Quarter-final', 'Semi-final', '3rd Place Play-off', 'Final']
@@ -1227,15 +1344,25 @@
       }
       var activeStages = stageOrder.filter(function(s) { return stagesPresent[s] })
 
-      if (predictions.length === 0) {
-        html += '<div class="no-data">No scored predictions yet.</div>'
-      } else {
-        html += '<div class="card"><div class="table-wrap"><table class="stage-table">'
-        html += '<thead><tr><th>User</th>'
-        for (var ai = 0; ai < activeStages.length; ai++) {
-          html += '<th>' + activeStages[ai] + '</th>'
+      var stageMetric = 'result'
+
+      function renderStageTable(metric) {
+        var out = ''
+        if (predictions.length === 0) {
+          return '<div class="no-data">No scored predictions yet.</div>'
         }
-        html += '</tr></thead><tbody>'
+
+        out += '<div class="stage-toggle">'
+        out += '<button class="stage-toggle-btn' + (metric === 'result' ? ' active' : '') + '" data-metric="result">Result Accuracy</button>'
+        out += '<button class="stage-toggle-btn' + (metric === 'score' ? ' active' : '') + '" data-metric="score">Score Accuracy</button>'
+        out += '</div>'
+
+        out += '<div class="card"><div class="table-wrap"><table class="stage-table">'
+        out += '<thead><tr><th>User</th>'
+        for (var ai = 0; ai < activeStages.length; ai++) {
+          out += '<th>' + activeStages[ai] + '</th>'
+        }
+        out += '</tr></thead><tbody>'
 
         var userEntries = Object.entries(userStageData).sort(function(a, b) {
           var aTotal = 0, bTotal = 0
@@ -1248,24 +1375,40 @@
           var uData = userEntries[ue]
           var uId = uData[0]
           var uInfo = uData[1]
-          html += '<tr><td class="username">' + (uInfo.username || uId.slice(0, 8)) + '</td>'
+          out += '<tr><td class="username">' + (uInfo.username || uId.slice(0, 8)) + '</td>'
           for (var sai = 0; sai < activeStages.length; sai++) {
             var saStage = activeStages[sai]
             var saData = uInfo.stages[saStage]
             if (saData && saData.total > 0) {
-              var saPct = Math.round((saData.correct / saData.total) * 100)
+              var saPct = metric === 'result'
+                ? Math.round((saData.correct / saData.total) * 100)
+                : Math.round((saData.scoreCorrect / saData.total) * 100)
               var saClass = saPct >= 60 ? 'high' : saPct >= 40 ? 'mid' : 'low'
-              html += '<td><span class="accuracy-pct ' + saClass + '">' + saPct + '%</span> '
-              html += '<span class="accuracy-predictions">(' + saData.total + ')</span></td>'
+              out += '<td><span class="accuracy-pct ' + saClass + '">' + saPct + '%</span> '
+              out += '<span class="accuracy-predictions">(' + saData.total + ')</span></td>'
             } else {
-              html += '<td style="color:var(--gray-700)">\u2014</td>'
+              out += '<td style="color:var(--gray-700)">\u2014</td>'
             }
           }
-          html += '</tr>'
+          out += '</tr>'
         }
 
-        html += '</tbody></table></div></div>'
+        out += '</tbody></table></div></div>'
+        return out
       }
+
+      html += '<div id="stage-breakdown-content">' + renderStageTable(stageMetric) + '</div>'
+      html += '<div style="text-align:right;margin-top:0.5rem"><button class="copy-btn" onclick="copySectionToPng(this, \'section-stage-breakdown\')" title="Copy as PNG">\u{1F4CB}</button></div>'
+      html += '</div>'
+
+      setTimeout(function() {
+        document.addEventListener('click', function(e) {
+          if (e.target.classList.contains('stage-toggle-btn')) {
+            stageMetric = e.target.getAttribute('data-metric')
+            document.getElementById('stage-breakdown-content').innerHTML = renderStageTable(stageMetric)
+          }
+        })
+      }, 0)
 
       app.innerHTML = html
 
