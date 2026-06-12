@@ -412,15 +412,6 @@
       margin-top: 1rem;
     }
 
-    .histogram-bar-wrap {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      height: 100%;
-      justify-content: flex-end;
-    }
-
     .histogram-bar {
       width: 100%;
       max-width: 50px;
@@ -457,6 +448,76 @@
     }
 
     .histogram-annotations span { font-weight: 600; color: var(--gold); }
+
+    .histogram-axis {
+      position: relative;
+      padding-left: 32px;
+    }
+
+    .histogram-y-label {
+      position: absolute;
+      left: 0;
+      top: 50%;
+      transform: translateY(-50%) rotate(-90deg);
+      transform-origin: center;
+      font-size: 0.65rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--gray-500);
+      white-space: nowrap;
+      pointer-events: none;
+    }
+
+    .histogram-x-label {
+      text-align: center;
+      font-size: 0.65rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--gray-500);
+      margin-top: 0.5rem;
+    }
+
+    .histogram-bar-wrap {
+      position: relative;
+    }
+
+    [data-tooltip] {
+      position: relative;
+      cursor: pointer;
+    }
+
+    [data-tooltip]:hover::after {
+      content: attr(data-tooltip);
+      position: absolute;
+      bottom: calc(100% + 8px);
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--gray-900);
+      border: 1px solid rgba(255,255,255,0.15);
+      color: var(--white);
+      font-size: 0.7rem;
+      font-weight: 500;
+      padding: 0.35rem 0.6rem;
+      border-radius: var(--radius);
+      white-space: nowrap;
+      pointer-events: none;
+      z-index: 10;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    }
+
+    [data-tooltip]:hover::before {
+      content: '';
+      position: absolute;
+      bottom: calc(100% + 2px);
+      left: 50%;
+      transform: translateX(-50%);
+      border: 5px solid transparent;
+      border-top-color: rgba(255,255,255,0.15);
+      pointer-events: none;
+      z-index: 10;
+    }
 
     .accuracy-table {
       width: 100%;
@@ -1045,16 +1106,20 @@
         }
 
         html += '<div class="card">'
+        html += '<div class="histogram-axis">'
+        html += '<div class="histogram-y-label">Number of users</div>'
         html += '<div class="histogram">'
         for (var h = 0; h < buckets.length; h++) {
           var b = buckets[h]
           var barHeight = Math.max((b.count / maxCount) * 180, 2)
           html += '<div class="histogram-bar-wrap">'
           html += '<div class="histogram-count">' + (b.count || '') + '</div>'
-          html += '<div class="histogram-bar" style="height:' + barHeight + 'px" title="' + b.count + ' users scored ' + b.label + ' points"></div>'
+          html += '<div class="histogram-bar" style="height:' + barHeight + 'px" data-tooltip="' + b.count + ' users scored ' + b.label + ' pts"></div>'
           html += '<div class="histogram-label">' + b.label + '</div>'
           html += '</div>'
         }
+        html += '</div>'
+        html += '<div class="histogram-x-label">Points range</div>'
         html += '</div>'
         html += '<div class="histogram-annotations">'
         html += '<div>Total users: <span>' + leaderboard.length + '</span></div>'
