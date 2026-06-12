@@ -1,0 +1,1213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WC2026 Insights</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --gold: #f5c842;
+      --gold-dim: #c9a22e;
+      --white: #ffffff;
+      --gray-300: #c5c5bb;
+      --gray-500: #8a8a82;
+      --gray-700: #4a4a44;
+      --gray-900: #1a1a16;
+      --danger: #e53e3e;
+      --success: #38a169;
+      --radius: 8px;
+      --radius-lg: 14px;
+      --font-display: 'Bebas Neue', sans-serif;
+      --font-body: 'Inter', sans-serif;
+    }
+
+    body {
+      font-family: var(--font-body);
+      background: var(--gray-900);
+      color: var(--white);
+      min-height: 100vh;
+      background-image:
+        radial-gradient(ellipse at 20% 50%, rgba(10,92,46,0.18) 0%, transparent 60%),
+        radial-gradient(ellipse at 80% 20%, rgba(245,200,66,0.07) 0%, transparent 50%);
+    }
+
+    .page { max-width: 1100px; margin: 0 auto; padding: 1.25rem 1rem; }
+
+    .header {
+      text-align: center;
+      margin-bottom: 2rem;
+      padding-top: 1rem;
+    }
+
+    .header h1 {
+      font-family: var(--font-display);
+      font-size: 3rem;
+      color: var(--gold);
+      letter-spacing: 0.06em;
+    }
+
+    .header p {
+      color: var(--gray-500);
+      font-size: 0.95rem;
+      margin-top: 0.3rem;
+    }
+
+    .section-title {
+      font-family: var(--font-display);
+      font-size: 2rem;
+      color: var(--gold);
+      letter-spacing: 0.06em;
+      margin-bottom: 0.25rem;
+      margin-top: 2.5rem;
+    }
+
+    .section-subtitle {
+      color: var(--gray-500);
+      font-size: 0.85rem;
+      margin-bottom: 1rem;
+    }
+
+    .card {
+      background: rgba(26,26,22,0.85);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: var(--radius-lg);
+      padding: 1.5rem;
+      margin-bottom: 1rem;
+    }
+
+    .loading {
+      text-align: center;
+      padding: 4rem 1rem;
+      color: var(--gray-500);
+    }
+
+    .loading .spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid rgba(245,200,66,0.2);
+      border-top-color: var(--gold);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 1rem;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .error-msg {
+      text-align: center;
+      padding: 2rem;
+      color: var(--danger);
+    }
+
+    .no-data {
+      text-align: center;
+      color: var(--gray-500);
+      padding: 2rem;
+      font-size: 0.9rem;
+    }
+
+    .filter-row {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 1.25rem;
+      flex-wrap: wrap;
+    }
+
+    .filter-label {
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--gray-500);
+    }
+
+    .filter-select {
+      padding: 0.5rem 2rem 0.5rem 0.75rem;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: var(--radius);
+      color: var(--white);
+      font-family: var(--font-body);
+      font-size: 0.85rem;
+      cursor: pointer;
+      outline: none;
+      -webkit-appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23888' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 0.7rem center;
+    }
+
+    .filter-select:focus {
+      border-color: var(--gold);
+      box-shadow: 0 0 0 3px rgba(245,200,66,0.15);
+    }
+
+    .filter-select option { background: var(--gray-900); color: var(--white); }
+
+    .sentiment-chip {
+      display: inline-block;
+      padding: 0.2rem 0.65rem;
+      border-radius: 99px;
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .sentiment-chip.pending {
+      background: rgba(49,130,206,0.15);
+      border: 1px solid rgba(49,130,206,0.35);
+      color: #63b3ed;
+    }
+
+    .sentiment-chip.played {
+      background: rgba(245,200,66,0.15);
+      border: 1px solid rgba(245,200,66,0.3);
+      color: var(--gold);
+    }
+
+    .crowd-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.75rem;
+    }
+
+    @media (max-width: 900px) { .crowd-grid { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 600px) { .crowd-grid { grid-template-columns: 1fr; } }
+
+    .crowd-grid .match-card {
+      margin-bottom: 0;
+    }
+
+    .crowd-grid .match-teams-label { font-size: 1.4rem; }
+    .crowd-grid .match-score { font-size: 1.6rem; }
+    .crowd-grid .crowd-bar-label { width: 60px; font-size: 0.7rem; }
+    .crowd-grid .crowd-bar-pct { width: 38px; font-size: 0.75rem; }
+    .crowd-grid .crowd-bar-track { height: 16px; }
+    .crowd-grid .crowd-verdict { font-size: 0.75rem; }
+
+    .pagination {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      margin-top: 1.25rem;
+    }
+
+    .page-btn {
+      padding: 0.4rem 0.75rem;
+      border-radius: var(--radius);
+      border: 1px solid rgba(255,255,255,0.12);
+      background: transparent;
+      color: var(--gray-300);
+      font-family: var(--font-body);
+      font-size: 0.8rem;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .page-btn:hover { border-color: rgba(255,255,255,0.3); color: var(--white); }
+    .page-btn.active { background: var(--gold); color: var(--gray-900); border-color: var(--gold); font-weight: 700; }
+    .page-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+    .page-info {
+      font-size: 0.8rem;
+      color: var(--gray-500);
+      margin: 0 0.5rem;
+    }
+
+    .match-card {
+      background: rgba(30,30,26,0.9);
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: var(--radius-lg);
+      padding: 1.5rem 1.75rem;
+      margin-bottom: 1rem;
+    }
+
+    .match-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1rem;
+    }
+
+    .match-teams-label {
+      font-family: var(--font-display);
+      font-size: 2rem;
+      letter-spacing: 0.04em;
+      margin-bottom: 0.35rem;
+    }
+
+    .match-score {
+      font-family: var(--font-display);
+      font-size: 3rem;
+      color: var(--gold);
+      letter-spacing: 0.04em;
+      margin-left: 0.75rem;
+    }
+
+    .match-stage {
+      font-size: 0.7rem;
+      color: var(--gray-500);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 0.4rem;
+    }
+
+    .crowd-bar-row {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 0.5rem;
+      font-size: 0.8rem;
+    }
+
+    .crowd-bar-label {
+      width: 90px;
+      text-align: right;
+      color: var(--gray-300);
+      flex-shrink: 0;
+      font-size: 0.75rem;
+    }
+
+    .crowd-bar-track {
+      flex: 1;
+      height: 24px;
+      background: rgba(255,255,255,0.05);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .crowd-bar-fill {
+      height: 100%;
+      border-radius: 4px;
+      transition: width 0.5s ease;
+    }
+
+    .crowd-bar-fill.team-a { background: rgba(49,130,206,0.6); }
+    .crowd-bar-fill.draw { background: rgba(160,160,150,0.5); }
+    .crowd-bar-fill.team-b { background: rgba(229,62,62,0.5); }
+
+    .crowd-bar-pct {
+      width: 50px;
+      text-align: left;
+      color: var(--gray-300);
+      font-weight: 600;
+      font-size: 0.8rem;
+    }
+
+    .crowd-verdict {
+      margin-top: 0.75rem;
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+
+    .crowd-verdict.correct { color: var(--success); }
+    .crowd-verdict.wrong { color: var(--danger); }
+
+    .copy-btn {
+      background: none;
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: var(--radius);
+      color: var(--gray-500);
+      cursor: pointer;
+      font-size: 0.7rem;
+      padding: 0.25rem 0.5rem;
+      transition: all 0.15s;
+      flex-shrink: 0;
+      line-height: 1;
+    }
+
+    .copy-btn:hover {
+      border-color: var(--gold);
+      color: var(--gold);
+    }
+
+    .copy-btn.copied {
+      border-color: var(--success);
+      color: var(--success);
+    }
+
+    .crowd-stats-row {
+      display: flex;
+      gap: 1rem;
+      margin-top: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    .crowd-stat {
+      display: flex;
+      flex-direction: column;
+      background: rgba(255,255,255,0.04);
+      border-radius: var(--radius);
+      padding: 0.6rem 0.85rem;
+      flex: 1;
+      min-width: 110px;
+    }
+
+    .crowd-stat-value {
+      font-family: var(--font-display);
+      font-size: 1.1rem;
+      color: var(--gold);
+      letter-spacing: 0.03em;
+    }
+
+    .crowd-stat-label {
+      font-size: 0.65rem;
+      color: var(--gray-500);
+      margin-top: 0.15rem;
+    }
+
+    .upset-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.65rem 0;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+
+    .upset-row:last-child { border-bottom: none; }
+
+    .upset-match { flex: 1; }
+
+    .upset-teams {
+      font-family: var(--font-display);
+      font-size: 1rem;
+      letter-spacing: 0.03em;
+    }
+
+    .upset-result {
+      font-size: 0.75rem;
+      color: var(--gray-500);
+      margin-top: 0.15rem;
+    }
+
+    .upset-pct {
+      font-family: var(--font-display);
+      font-size: 1.4rem;
+      color: var(--danger);
+      letter-spacing: 0.03em;
+      text-align: right;
+      min-width: 60px;
+    }
+
+    .upset-pct-label {
+      font-size: 0.65rem;
+      color: var(--gray-500);
+      text-align: right;
+    }
+
+    .histogram {
+      display: flex;
+      align-items: flex-end;
+      gap: 6px;
+      height: 200px;
+      padding: 0 0.5rem;
+      margin-top: 1rem;
+    }
+
+    .histogram-bar-wrap {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      height: 100%;
+      justify-content: flex-end;
+    }
+
+    .histogram-bar {
+      width: 100%;
+      max-width: 50px;
+      background: var(--gold);
+      border-radius: 4px 4px 0 0;
+      min-height: 2px;
+      transition: height 0.5s ease;
+    }
+
+    .histogram-bar:hover { background: var(--gold-dim); }
+    .histogram-bar { cursor: pointer; }
+
+    .histogram-count {
+      font-size: 0.7rem;
+      color: var(--gray-300);
+      margin-bottom: 4px;
+      font-weight: 600;
+    }
+
+    .histogram-label {
+      font-size: 0.65rem;
+      color: var(--gray-500);
+      margin-top: 6px;
+      text-align: center;
+      white-space: nowrap;
+    }
+
+    .histogram-annotations {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 0.75rem;
+      font-size: 0.8rem;
+      color: var(--gray-300);
+    }
+
+    .histogram-annotations span { font-weight: 600; color: var(--gold); }
+
+    .accuracy-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+    }
+
+    .accuracy-table th {
+      text-align: left;
+      padding: 0.6rem 0.75rem;
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--gray-500);
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      position: sticky;
+      top: 0;
+      background: var(--gray-900);
+      z-index: 1;
+    }
+
+    .accuracy-table td {
+      padding: 0.6rem 0.75rem;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+      color: var(--gray-300);
+    }
+
+    .accuracy-table tr:hover td { background: rgba(255,255,255,0.03); }
+
+    .accuracy-pct {
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .accuracy-pct.high { color: var(--success); }
+    .accuracy-pct.mid { color: var(--gold); }
+    .accuracy-pct.low { color: var(--danger); }
+
+    .accuracy-predictions {
+      font-size: 0.75rem;
+      color: var(--gray-500);
+    }
+
+    .gb-bar-row {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .gb-bar-rank {
+      width: 24px;
+      font-size: 0.75rem;
+      color: var(--gray-500);
+      text-align: right;
+      flex-shrink: 0;
+    }
+
+    .gb-bar-name {
+      width: 180px;
+      font-size: 0.85rem;
+      color: var(--white);
+      flex-shrink: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .gb-bar-track {
+      flex: 1;
+      height: 22px;
+      background: rgba(255,255,255,0.05);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .gb-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--gold), var(--gold-dim));
+      border-radius: 4px;
+      transition: width 0.5s ease;
+    }
+
+    .gb-bar-count {
+      width: 40px;
+      text-align: right;
+      font-weight: 700;
+      font-size: 0.85rem;
+      color: var(--gold);
+    }
+
+    .gb-summary {
+      margin-top: 1.25rem;
+      display: flex;
+      gap: 2rem;
+      font-size: 0.85rem;
+      color: var(--gray-300);
+    }
+
+    .gb-summary strong { color: var(--gold); }
+
+    .stage-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+    }
+
+    .stage-table th {
+      text-align: left;
+      padding: 0.6rem 0.75rem;
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--gray-500);
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      position: sticky;
+      top: 0;
+      background: var(--gray-900);
+      z-index: 1;
+    }
+
+    .stage-table td {
+      padding: 0.6rem 0.75rem;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+      color: var(--gray-300);
+    }
+
+    .stage-table tr:hover td { background: rgba(255,255,255,0.03); }
+
+    .stage-table .username {
+      font-weight: 600;
+      color: var(--white);
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+      border-radius: var(--radius);
+      cursor: grab;
+    }
+
+    .table-wrap:active { cursor: grabbing; }
+    .table-wrap::-webkit-scrollbar { display: none; }
+
+    @media (max-width: 600px) {
+      .header h1 { font-size: 2.2rem; }
+      .section-title { font-size: 1.5rem; }
+      .gb-bar-name { width: 120px; font-size: 0.8rem; }
+      .stage-table { font-size: 0.65rem; }
+      .stage-table th,
+      .stage-table td { padding: 0.4rem 0.3rem; }
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+  <script>
+    function copyCardToPng(btn) {
+      var card = btn.closest('.match-card')
+      btn.textContent = '\u231B'
+      html2canvas(card, { backgroundColor: '#1a1a16', scale: 4, useCORS: true }).then(function(canvas) {
+        canvas.toBlob(function(blob) {
+          try {
+            navigator.clipboard.write([
+              new ClipboardItem({ 'image/png': blob })
+            ]).then(function() {
+              btn.textContent = '\u2713'
+              btn.classList.add('copied')
+              setTimeout(function() {
+                btn.textContent = '\u{1F4CB}'
+                btn.classList.remove('copied')
+              }, 2000)
+            }).catch(function() {
+              btn.textContent = '\u2717'
+              setTimeout(function() { btn.textContent = '\u{1F4CB}' }, 1500)
+            })
+          } catch (e) {
+            btn.textContent = '\u2717'
+            setTimeout(function() { btn.textContent = '\u{1F4CB}' }, 1500)
+          }
+        }, 'image/png')
+      })
+    }
+  </script>
+</head>
+<body>
+  <div class="page">
+    <div class="header">
+      <h1>WC2026 Insights</h1>
+      <p>Live stats and crowd analytics from the prediction league</p>
+    </div>
+
+    <div id="app">
+      <div class="loading">
+        <div class="spinner"></div>
+        <p>Loading insights...</p>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm'
+
+    const SUPABASE_URL = 'https://pqmjkggmcodjwyiceczi.supabase.co'
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBxbWprZ2dtY29kand5aWNlY3ppIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA1ODY4MTUsImV4cCI6MjA5NjE2MjgxNX0.7EOh4gkJ97DRLdf5IG3VB3gabtKMor02775ONuIhZ40'
+    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+
+    const app = document.getElementById('app')
+
+    const FLAG_CODES = {
+      "Mexico":"mx","South Korea":"kr","Czechia":"cz","South Africa":"za","Switzerland":"ch",
+      "Canada":"ca","Qatar":"qa","Bosnia and Herzegovina":"ba","Brazil":"br","Morocco":"ma",
+      "Haiti":"ht","Scotland":"gb-sct","USA":"us","Turkey":"tr","Australia":"au","Paraguay":"py",
+      "Germany":"de","Ecuador":"ec","Ivory Coast":"ci","Curacao":"cw","Netherlands":"nl",
+      "Japan":"jp","Sweden":"se","Tunisia":"tn","Belgium":"be","Egypt":"eg","Iran":"ir",
+      "New Zealand":"nz","Spain":"es","Cape Verde":"cv","Saudi Arabia":"sa","Uruguay":"uy",
+      "France":"fr","Senegal":"sn","Iraq":"iq","Norway":"no","Argentina":"ar","Algeria":"dz",
+      "Austria":"at","Jordan":"jo","Portugal":"pt","DR Congo":"cd","Uzbekistan":"uz",
+      "Colombia":"co","England":"gb-eng","Croatia":"hr","Ghana":"gh","Panama":"pa",
+    }
+
+    function flagImg(teamName, size) {
+      var code = FLAG_CODES[teamName]
+      if (!code) return ''
+      size = size || 24
+      var flagSizes = [[16,'16x12'],[20,'20x15'],[24,'24x18'],[32,'32x24'],[40,'40x30']]
+      var dim = flagSizes[0][1]
+      for (var fi = 0; fi < flagSizes.length; fi++) {
+        if (size <= flagSizes[fi][0]) { dim = flagSizes[fi][1]; break }
+      }
+      var wh = dim.split('x')
+      return '<img src="https://flagcdn.com/' + dim + '/' + code + '.png" alt="' + teamName + '" width="' + wh[0] + '" height="' + wh[1] + '" style="border-radius:2px;vertical-align:middle;margin-right:4px">'
+    }
+
+    var SHORT_NAMES = {
+      "Mexico":"MEX","South Korea":"KOR","Czechia":"CZE","South Africa":"RSA","Switzerland":"SUI",
+      "Canada":"CAN","Qatar":"QAT","Bosnia and Herzegovina":"BIH","Brazil":"BRA","Morocco":"MAR",
+      "Haiti":"HTI","Scotland":"SCO","USA":"USA","Turkey":"TUR","Australia":"AUS","Paraguay":"PAR",
+      "Germany":"GER","Ecuador":"ECU","Ivory Coast":"CIV","Curacao":"CUW","Netherlands":"NED",
+      "Japan":"JPN","Sweden":"SWE","Tunisia":"TUN","Belgium":"BEL","Egypt":"EGY","Iran":"IRN",
+      "New Zealand":"NZL","Spain":"ESP","Cape Verde":"CPV","Saudi Arabia":"KSA","Uruguay":"URU",
+      "France":"FRA","Senegal":"SEN","Iraq":"IRQ","Norway":"NOR","Argentina":"ARG","Algeria":"ALG",
+      "Austria":"AUT","Jordan":"JOR","Portugal":"POR","DR Congo":"COD","Uzbekistan":"UZB",
+      "Colombia":"COL","England":"ENG","Croatia":"CRO","Ghana":"GHA","Panama":"PAN",
+    }
+
+    function shortName(name) {
+      return SHORT_NAMES[name] || name
+    }
+
+    function fmtDate(d) {
+      if (!d) return ''
+      var parts = d.split('-')
+      var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+      return months[parseInt(parts[1], 10) - 1] + ' ' + parseInt(parts[2], 10)
+    }
+
+    function renderError(msg) {
+      app.innerHTML = '<div class="error-msg"><p>' + msg + '</p></div>'
+    }
+
+    function fmtPct(n) { return n + '%' }
+
+    try {
+      const [predsRes, matchesRes, leaderboardRes, gbRes] = await Promise.all([
+        supabase.from('predictions').select(`
+          id, user_id, match_id, predicted_result, predicted_score_a, predicted_score_b,
+          is_result_correct, is_score_correct, points_earned,
+          matches!inner(team_a, team_b, score_a, score_b, result, stage, match_date, group_name, id)
+        `),
+        supabase.from('matches').select('id, team_a, team_b, score_a, score_b, result, stage, match_date, group_name, kickoff_utc').order('id'),
+        supabase.from('league_table').select('id, username, points, correct_results, correct_scorelines'),
+        supabase.from('profiles').select('golden_boot_pick').not('golden_boot_pick', 'is', null)
+      ])
+
+      if (predsRes.error) throw new Error('Predictions: ' + predsRes.error.message)
+      if (matchesRes.error) throw new Error('Matches: ' + matchesRes.error.message)
+      if (leaderboardRes.error) throw new Error('Leaderboard: ' + leaderboardRes.error.message)
+      if (gbRes.error) throw new Error('Golden Boot: ' + gbRes.error.message)
+
+      const predictions = predsRes.data || []
+      const allMatches = matchesRes.data || []
+      const leaderboard = leaderboardRes.data || []
+      const goldenBootPicks = gbRes.data || []
+
+      const usernameMap = {}
+      for (const u of leaderboard) {
+        if (u.id && u.username) usernameMap[u.id] = u.username
+      }
+
+      const matchMap = {}
+      const lockThreshold = Date.now() + 3600000
+      for (const am of allMatches) {
+        const isLocked = am.kickoff_utc ? (new Date(am.kickoff_utc).getTime() <= lockThreshold) : false
+        matchMap[am.id] = {
+          id: am.id, teamA: am.team_a, teamB: am.team_b,
+          scoreA: am.score_a, scoreB: am.score_b, result: am.result,
+          stage: am.stage, date: am.match_date, group: am.group_name,
+          locked: isLocked,
+          predictions: []
+        }
+      }
+      for (const p of predictions) {
+        const m = p.matches
+        if (!matchMap[m.id]) {
+          const isLocked = m.kickoff_utc ? (new Date(m.kickoff_utc).getTime() <= lockThreshold) : false
+          matchMap[m.id] = {
+            id: m.id, teamA: m.team_a, teamB: m.team_b,
+            scoreA: m.score_a, scoreB: m.score_b, result: m.result,
+            stage: m.stage, date: m.match_date, group: m.group_name,
+            locked: isLocked,
+            predictions: []
+          }
+        }
+        matchMap[m.id].predictions.push(p)
+      }
+
+      let html = ''
+
+      // ========== 1. CROWD WISDOM ==========
+      html += '<h2 class="section-title">Crowd Wisdom</h2>'
+      html += '<p class="section-subtitle">See what the crowd expects before kickoff, or compare with the actual result after</p>'
+
+      const allMatchList = Object.values(matchMap)
+        .filter(function(m) { return m.locked })
+        .sort(function(a, b) {
+        if (a.date !== b.date) return b.date.localeCompare(a.date)
+        return b.id - a.id
+      })
+
+      // Build dropdown
+      html += '<div class="filter-row">'
+      html += '<span class="filter-label">Match:</span>'
+      html += '<select class="filter-select" id="crowd-filter">'
+      html += '<option value="all">All matches</option>'
+      for (var fi = 0; fi < allMatchList.length; fi++) {
+        var fm = allMatchList[fi]
+        if (fm.predictions.length === 0) continue
+        var fLabel = shortName(fm.teamA) + ' vs ' + shortName(fm.teamB)
+        var fStage = fm.group ? ' (Grp ' + fm.group + ')' : ' (' + fm.stage.substring(0, 3) + ')'
+        html += '<option value="' + fm.id + '">' + fLabel + fStage + ' — ' + fmtDate(fm.date) + '</option>'
+      }
+      html += '</select>'
+      html += '</div>'
+
+      html += '<div id="crowd-results">'
+
+      var CROWD_PER_PAGE = 9
+      var crowdPage = 1
+
+      function renderCrowdMatch(m, compact) {
+        var preds = m.predictions
+        var total = preds.length
+        if (total === 0) return ''
+
+        var teamACount = 0, drawCount = 0, teamBCount = 0
+        for (var j = 0; j < preds.length; j++) {
+          if (preds[j].predicted_result === 'teamA') teamACount++
+          else if (preds[j].predicted_result === 'draw') drawCount++
+          else teamBCount++
+        }
+
+        var teamAPct = Math.round((teamACount / total) * 100)
+        var drawPct = Math.round((drawCount / total) * 100)
+        var teamBPct = 100 - teamAPct - drawPct
+
+        var majorityResult = 'teamA'
+        if (drawCount > teamACount && drawCount > teamBCount) majorityResult = 'draw'
+        else if (teamBCount > teamACount) majorityResult = 'teamB'
+
+        var isPlayed = m.result !== null
+        var crowdRight = isPlayed ? (majorityResult === m.result) : null
+        var stageLabel = m.group ? 'Group ' + m.group : m.stage
+
+        var out = '<div class="match-card">'
+        out += '<div class="match-header">'
+        out += '<div><div class="match-teams-label">' + flagImg(m.teamA) + shortName(m.teamA) + ' vs ' + flagImg(m.teamB) + shortName(m.teamB)
+        if (isPlayed) {
+          out += ' <span class="match-score">' + m.scoreA + ' - ' + m.scoreB + '</span>'
+        }
+        out += '</div>'
+        out += '<div class="match-stage">' + stageLabel + ' &middot; ' + fmtDate(m.date) + '</div>'
+        out += '<div><span class="sentiment-chip ' + (isPlayed ? 'played' : 'pending') + '">'
+        out += isPlayed ? 'Result in' : 'Awaiting result'
+        out += '</span></div></div>'
+        out += '<button class="copy-btn" onclick="copyCardToPng(this)" title="Copy as PNG">\u{1F4CB}</button>'
+        out += '</div>'
+
+        out += '<div class="crowd-bar-row"><div class="crowd-bar-label">' + flagImg(m.teamA) + shortName(m.teamA) + '</div>'
+        out += '<div class="crowd-bar-track"><div class="crowd-bar-fill team-a" style="width:' + teamAPct + '%"></div></div>'
+        out += '<div class="crowd-bar-pct">' + teamAPct + '%</div></div>'
+
+        out += '<div class="crowd-bar-row"><div class="crowd-bar-label">Draw</div>'
+        out += '<div class="crowd-bar-track"><div class="crowd-bar-fill draw" style="width:' + drawPct + '%"></div></div>'
+        out += '<div class="crowd-bar-pct">' + drawPct + '%</div></div>'
+
+        out += '<div class="crowd-bar-row"><div class="crowd-bar-label">' + flagImg(m.teamB) + shortName(m.teamB) + '</div>'
+        out += '<div class="crowd-bar-track"><div class="crowd-bar-fill team-b" style="width:' + teamBPct + '%"></div></div>'
+        out += '<div class="crowd-bar-pct">' + teamBPct + '%</div></div>'
+
+        if (isPlayed) {
+          var scoreCounts = {}
+          for (var j3 = 0; j3 < preds.length; j3++) {
+            var sk = preds[j3].predicted_score_a + '-' + preds[j3].predicted_score_b
+            scoreCounts[sk] = (scoreCounts[sk] || 0) + 1
+          }
+          var topScore = '', topScoreCount = 0
+          for (var sc in scoreCounts) {
+            if (scoreCounts[sc] > topScoreCount) { topScore = sc; topScoreCount = scoreCounts[sc] }
+          }
+
+          var resultCorrect = 0
+          for (var j4 = 0; j4 < preds.length; j4++) {
+            if (preds[j4].predicted_result === m.result) resultCorrect++
+          }
+          var resultPct = Math.round((resultCorrect / total) * 100)
+
+          var scoreCorrect = 0
+          for (var j5 = 0; j5 < preds.length; j5++) {
+            if (preds[j5].predicted_score_a === m.scoreA && preds[j5].predicted_score_b === m.scoreB) scoreCorrect++
+          }
+          var scoreAccPct = Math.round((scoreCorrect / total) * 100)
+
+          out += '<div class="crowd-stats-row">'
+          out += '<div class="crowd-stat"><span class="crowd-stat-value">' + (topScore || '\u2014') + '</span><span class="crowd-stat-label">Most predicted score</span></div>'
+          out += '<div class="crowd-stat"><span class="crowd-stat-value">' + resultCorrect + '/' + total + '</span><span class="crowd-stat-label">Got result right (' + resultPct + '%)</span></div>'
+          out += '<div class="crowd-stat"><span class="crowd-stat-value">' + scoreCorrect + '/' + total + '</span><span class="crowd-stat-label">Got exact score (' + scoreAccPct + '%)</span></div>'
+          out += '</div>'
+
+
+        } else {
+          out += '<div style="margin-top:0.5rem;font-size:0.8rem;color:var(--gray-500)">' + total + ' prediction' + (total !== 1 ? 's' : '') + ' so far</div>'
+        }
+
+        out += '</div>'
+        return out
+      }
+
+      function renderAllCrowd(filter, page) {
+        var out = ''
+        var list = allMatchList
+        var isSingle = false
+
+        if (filter !== 'all') {
+          var fid = parseInt(filter)
+          list = list.filter(function(m) { return m.id === fid })
+          isSingle = true
+        }
+
+        var withPreds = list.filter(function(m) { return m.predictions.length > 0 })
+
+        if (withPreds.length === 0) {
+          return '<div class="no-data">No predictions for this match yet.</div>'
+        }
+
+        if (isSingle) {
+          for (var ci = 0; ci < withPreds.length; ci++) {
+            out += renderCrowdMatch(withPreds[ci], false)
+          }
+          return out
+        }
+
+        var totalPages = Math.ceil(withPreds.length / CROWD_PER_PAGE)
+        if (page > totalPages) page = totalPages
+        var start = (page - 1) * CROWD_PER_PAGE
+        var pageItems = withPreds.slice(start, start + CROWD_PER_PAGE)
+
+        out += '<div class="crowd-grid">'
+        for (var ci2 = 0; ci2 < pageItems.length; ci2++) {
+          out += renderCrowdMatch(pageItems[ci2], true)
+        }
+        out += '</div>'
+
+        if (totalPages > 1) {
+          out += '<div class="pagination">'
+          out += '<button class="page-btn" data-page="prev" ' + (page <= 1 ? 'disabled' : '') + '>&laquo; Prev</button>'
+          for (var pg = 1; pg <= totalPages; pg++) {
+            out += '<button class="page-btn' + (pg === page ? ' active' : '') + '" data-page="' + pg + '">' + pg + '</button>'
+          }
+          out += '<button class="page-btn" data-page="next" ' + (page >= totalPages ? 'disabled' : '') + '>Next &raquo;</button>'
+          out += '</div>'
+        }
+
+        return out
+      }
+
+      html += renderAllCrowd('all', crowdPage)
+      html += '</div>'
+
+      setTimeout(function() {
+        var sel = document.getElementById('crowd-filter')
+        if (sel) {
+          sel.addEventListener('change', function() {
+            crowdPage = 1
+            document.getElementById('crowd-results').innerHTML = renderAllCrowd(sel.value, crowdPage)
+            attachPageListeners()
+          })
+        }
+        attachPageListeners()
+      }, 0)
+
+      function attachPageListeners() {
+        var btns = document.querySelectorAll('#crowd-results .page-btn')
+        btns.forEach(function(btn) {
+          btn.addEventListener('click', function() {
+            var action = btn.getAttribute('data-page')
+            var totalPages = Math.ceil(allMatchList.filter(function(m) { return m.predictions.length > 0 }).length / CROWD_PER_PAGE)
+            if (action === 'prev') crowdPage = Math.max(1, crowdPage - 1)
+            else if (action === 'next') crowdPage = Math.min(totalPages, crowdPage + 1)
+            else crowdPage = parseInt(action)
+            var selVal = sel ? sel.value : 'all'
+            document.getElementById('crowd-results').innerHTML = renderAllCrowd(selVal, crowdPage)
+            attachPageListeners()
+          })
+        })
+      }
+
+      // ========== 2. UPSET TRACKER ==========
+      html += '<h2 class="section-title">Upset Tracker</h2>'
+      html += '<p class="section-subtitle">Matches where the majority got it wrong</p>'
+
+      var upsetData = []
+      for (var k = 0; k < allMatchList.length; k++) {
+        var um = allMatchList[k]
+        var utotal = um.predictions.length
+        if (utotal === 0 || um.result === null) continue
+        var wrongCount = 0
+        for (var j2 = 0; j2 < um.predictions.length; j2++) {
+          if (um.predictions[j2].predicted_result !== um.result) wrongCount++
+        }
+        upsetData.push({
+          teamA: um.teamA, teamB: um.teamB, result: um.result,
+          scoreA: um.scoreA, scoreB: um.scoreB, stage: um.stage,
+          group: um.group, date: um.date,
+          wrongPct: Math.round((wrongCount / utotal) * 100),
+          total: utotal, wrongCount: wrongCount
+        })
+      }
+      upsetData.sort(function(a, b) { return b.wrongPct - a.wrongPct })
+
+      if (upsetData.length === 0) {
+        html += '<div class="no-data">No scored matches yet.</div>'
+      } else {
+        html += '<div class="card">'
+        var shown = upsetData.slice(0, 20)
+        for (var ui = 0; ui < shown.length; ui++) {
+          var u = shown[ui]
+          var resultText = u.result === 'teamA' ? shortName(u.teamA) + ' win' : u.result === 'teamB' ? shortName(u.teamB) + ' win' : 'Draw'
+          html += '<div class="upset-row">'
+          html += '<div class="upset-match"><div class="upset-teams">' + flagImg(u.teamA) + shortName(u.teamA) + ' vs ' + flagImg(u.teamB) + shortName(u.teamB) + '</div>'
+          html += '<div class="upset-result">' + resultText + ' ' + u.scoreA + '-' + u.scoreB + ' &middot; ' + u.total + ' predictions</div></div>'
+          html += '<div><div class="upset-pct">' + u.wrongPct + '%</div>'
+          html += '<div class="upset-pct-label">got it wrong</div></div>'
+          html += '</div>'
+        }
+        html += '</div>'
+      }
+
+      // ========== 3. POINTS DISTRIBUTION ==========
+      html += '<h2 class="section-title">Points Distribution</h2>'
+      html += '<p class="section-subtitle">How many users fall in each point range — taller bars mean more users scored in that range. Hover a bar for details.</p>'
+
+      if (leaderboard.length === 0) {
+        html += '<div class="no-data">No leaderboard data yet.</div>'
+      } else {
+        var allPts = leaderboard.map(function(u) { return u.points }).sort(function(a, b) { return a - b })
+        var maxPts = allPts[allPts.length - 1]
+        var median = allPts[Math.floor(allPts.length / 2)]
+
+        var bucketSize = maxPts <= 50 ? 5 : maxPts <= 100 ? 10 : 20
+        var buckets = []
+        for (var bi = 0; bi <= maxPts; bi += bucketSize) {
+          var end = bi + bucketSize
+          var count = allPts.filter(function(p) { return p >= bi && p < end }).length
+          buckets.push({ label: bi + '-' + (end - 1), count: count, start: bi })
+        }
+        if (buckets.length > 0) {
+          var lastB = buckets[buckets.length - 1]
+          lastB.count = allPts.filter(function(p) { return p >= lastB.start }).length
+        }
+
+        var maxCount = 1
+        for (var ci = 0; ci < buckets.length; ci++) {
+          if (buckets[ci].count > maxCount) maxCount = buckets[ci].count
+        }
+
+        html += '<div class="card">'
+        html += '<div class="histogram">'
+        for (var h = 0; h < buckets.length; h++) {
+          var b = buckets[h]
+          var barHeight = Math.max((b.count / maxCount) * 180, 2)
+          html += '<div class="histogram-bar-wrap">'
+          html += '<div class="histogram-count">' + (b.count || '') + '</div>'
+          html += '<div class="histogram-bar" style="height:' + barHeight + 'px" title="' + b.count + ' users scored ' + b.label + ' points"></div>'
+          html += '<div class="histogram-label">' + b.label + '</div>'
+          html += '</div>'
+        }
+        html += '</div>'
+        html += '<div class="histogram-annotations">'
+        html += '<div>Total users: <span>' + leaderboard.length + '</span></div>'
+        html += '<div>Median: <span>' + median + ' pts</span></div>'
+        html += '<div>Top score: <span>' + maxPts + ' pts</span></div>'
+        html += '</div></div>'
+      }
+
+      // ========== 4. ACCURACY OVER TIME ==========
+      html += '<h2 class="section-title">Accuracy Over Time</h2>'
+      html += '<p class="section-subtitle">Are users getting better as the tournament progresses?</p>'
+
+      var byDate = {}
+      for (var di = 0; di < predictions.length; di++) {
+        var dp = predictions[di]
+        if (dp.is_result_correct === null) continue
+        var dkey = dp.matches.match_date
+        if (!byDate[dkey]) byDate[dkey] = { resultCorrect: 0, scoreCorrect: 0, total: 0 }
+        byDate[dkey].total++
+        if (dp.is_result_correct) byDate[dkey].resultCorrect++
+        if (dp.is_score_correct) byDate[dkey].scoreCorrect++
+      }
+
+      var dates = Object.keys(byDate).sort()
+      if (dates.length === 0) {
+        html += '<div class="no-data">No scored predictions yet.</div>'
+      } else {
+        html += '<div class="card"><div class="table-wrap"><table class="accuracy-table">'
+        html += '<thead><tr><th>Date</th><th>Result Accuracy</th><th>Score Accuracy</th><th>Predictions</th></tr></thead><tbody>'
+        for (var d = 0; d < dates.length; d++) {
+          var dd = dates[d]
+          var data = byDate[dd]
+          var resultPct = data.total > 0 ? Math.round((data.resultCorrect / data.total) * 100) : 0
+          var scorePct = data.total > 0 ? Math.round((data.scoreCorrect / data.total) * 100) : 0
+          var rClass = resultPct >= 60 ? 'high' : resultPct >= 40 ? 'mid' : 'low'
+          var sClass = scorePct >= 20 ? 'high' : scorePct >= 10 ? 'mid' : 'low'
+          html += '<tr><td>' + fmtDate(dd) + '</td>'
+          html += '<td><span class="accuracy-pct ' + rClass + '">' + resultPct + '%</span></td>'
+          html += '<td><span class="accuracy-pct ' + sClass + '">' + scorePct + '%</span></td>'
+          html += '<td class="accuracy-predictions">' + data.total + '</td></tr>'
+        }
+        html += '</tbody></table></div></div>'
+      }
+
+      // ========== 5. GOLDEN BOOT BUZZ ==========
+      html += '<h2 class="section-title">Golden Boot Buzz</h2>'
+      html += '<p class="section-subtitle">Most popular Golden Boot picks across the league</p>'
+
+      if (goldenBootPicks.length === 0) {
+        html += '<div class="no-data">No Golden Boot picks submitted yet.</div>'
+      } else {
+        var pickCounts = {}
+        for (var gi = 0; gi < goldenBootPicks.length; gi++) {
+          var pname = goldenBootPicks[gi].golden_boot_pick
+          pickCounts[pname] = (pickCounts[pname] || 0) + 1
+        }
+
+        var sorted = Object.entries(pickCounts)
+          .sort(function(a, b) { return b[1] - a[1] })
+          .slice(0, 15)
+
+        var maxPick = sorted[0][1]
+
+        html += '<div class="card">'
+        for (var si = 0; si < sorted.length; si++) {
+          var sname = sorted[si][0]
+          var scount = sorted[si][1]
+          var spct = Math.round((scount / maxPick) * 100)
+          html += '<div class="gb-bar-row">'
+          html += '<div class="gb-bar-rank">#' + (si + 1) + '</div>'
+          html += '<div class="gb-bar-name">' + sname + '</div>'
+          html += '<div class="gb-bar-track"><div class="gb-bar-fill" style="width:' + spct + '%"></div></div>'
+          html += '<div class="gb-bar-count">' + scount + '</div>'
+          html += '</div>'
+        }
+        html += '</div>'
+        html += '<div class="gb-summary">'
+        html += '<div>Total picks: <strong>' + goldenBootPicks.length + '</strong></div>'
+        html += '<div>Unique players chosen: <strong>' + sorted.length + '</strong></div>'
+        html += '</div>'
+      }
+
+      // ========== 6. STAGE BREAKDOWN ==========
+      html += '<h2 class="section-title">Stage Breakdown</h2>'
+      html += '<p class="section-subtitle">Accuracy per user across tournament stages</p>'
+
+      var userStageData = {}
+      for (var pi = 0; pi < predictions.length; pi++) {
+        var pp = predictions[pi]
+        if (pp.is_result_correct === null) continue
+        var uid = pp.user_id
+        if (!userStageData[uid]) userStageData[uid] = { username: usernameMap[uid] || uid.slice(0, 8), stages: {} }
+        var stage = pp.matches.stage
+        if (!userStageData[uid].stages[stage]) {
+          userStageData[uid].stages[stage] = { correct: 0, total: 0 }
+        }
+        userStageData[uid].stages[stage].total++
+        if (pp.is_result_correct) userStageData[uid].stages[stage].correct++
+      }
+
+      var stageOrder = ['Group Stage', 'Round of 32', 'Round of 16', 'Quarter-final', 'Semi-final', '3rd Place Play-off', 'Final']
+      var stagesPresent = {}
+      for (var usid in userStageData) {
+        for (var sst in userStageData[usid].stages) stagesPresent[sst] = true
+      }
+      var activeStages = stageOrder.filter(function(s) { return stagesPresent[s] })
+
+      if (predictions.length === 0) {
+        html += '<div class="no-data">No scored predictions yet.</div>'
+      } else {
+        html += '<div class="card"><div class="table-wrap"><table class="stage-table">'
+        html += '<thead><tr><th>User</th>'
+        for (var ai = 0; ai < activeStages.length; ai++) {
+          html += '<th>' + activeStages[ai] + '</th>'
+        }
+        html += '</tr></thead><tbody>'
+
+        var userEntries = Object.entries(userStageData).sort(function(a, b) {
+          var aTotal = 0, bTotal = 0
+          for (var x in a[1].stages) aTotal += a[1].stages[x].correct
+          for (var y in b[1].stages) bTotal += b[1].stages[y].correct
+          return bTotal - aTotal
+        })
+
+        for (var ue = 0; ue < userEntries.length; ue++) {
+          var uData = userEntries[ue]
+          var uId = uData[0]
+          var uInfo = uData[1]
+          html += '<tr><td class="username">' + (uInfo.username || uId.slice(0, 8)) + '</td>'
+          for (var sai = 0; sai < activeStages.length; sai++) {
+            var saStage = activeStages[sai]
+            var saData = uInfo.stages[saStage]
+            if (saData && saData.total > 0) {
+              var saPct = Math.round((saData.correct / saData.total) * 100)
+              var saClass = saPct >= 60 ? 'high' : saPct >= 40 ? 'mid' : 'low'
+              html += '<td><span class="accuracy-pct ' + saClass + '">' + saPct + '%</span> '
+              html += '<span class="accuracy-predictions">(' + saData.total + ')</span></td>'
+            } else {
+              html += '<td style="color:var(--gray-700)">\u2014</td>'
+            }
+          }
+          html += '</tr>'
+        }
+
+        html += '</tbody></table></div></div>'
+      }
+
+      app.innerHTML = html
+
+    } catch (err) {
+      renderError('Something went wrong: ' + err.message)
+      console.error(err)
+    }
+  </script>
+</body>
+</html>
