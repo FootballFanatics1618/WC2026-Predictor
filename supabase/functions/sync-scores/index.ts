@@ -88,13 +88,20 @@ Deno.serve(async (req) => {
 
   try {
     // ── Step 1: Find matches that should be finished but aren't scored yet ──
-    // "Should be finished" = kickoff was more than 2 hours ago
-    // Using 2h as conservative buffer — a match rarely runs longer than 2h15m
+    // Group stage: 2h buffer (90 min + stoppage)
+    // Knockout: 3.5h buffer (extra time + penalties + API lag)
+    const KNOCKOUT_STAGES = ['Round of 32', 'Round of 16', 'Quarter-final', 'Semi-final', '3rd Place Play-off', 'Final']
+    const BUFFER_GROUP = 2 * 60 * 60 * 1000          // 2 hours
+    const BUFFER_KNOCKOUT = 3.5 * 60 * 60 * 1000     // 3.5 hours
+
+    const groupCutoff = new Date(Date.now() - BUFFER_GROUP).toISOString()
+    const knockoutCutoff = new Date(Date.now() - BUFFER_KNOCKOUT).toISOString()
+
     const { data: pendingMatches, error: fetchErr } = await supabase
       .from('matches')
       .select('id, team_a, team_b, stage, result, kickoff_utc, knockout_slot')
       .is('result', null)
-      .lt('kickoff_utc', new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString())
+      .or(`and(stage.eq.Group Stage,kickoff_utc.lt.${groupCutoff}),and(stage.neq.Group Stage,kickoff_utc.lt.${knockoutCutoff})`)
       .order('kickoff_utc')
 
     if (fetchErr) throw new Error(`DB fetch failed: ${fetchErr.message}`)

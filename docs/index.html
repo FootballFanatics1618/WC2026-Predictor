@@ -77,7 +77,7 @@
       background: rgba(26,26,22,0.85);
       border: 1px solid rgba(255,255,255,0.08);
       border-radius: var(--radius-lg);
-      padding: 1.5rem;
+      padding: 1.25rem;
       margin-bottom: 1rem;
     }
 
@@ -549,6 +549,7 @@
       padding: 0.6rem 0.75rem;
       border-bottom: 1px solid rgba(255,255,255,0.05);
       color: var(--gray-300);
+      white-space: nowrap;
     }
 
     .accuracy-table tr:hover td { background: rgba(255,255,255,0.03); }
@@ -566,6 +567,8 @@
       font-size: 0.75rem;
       color: var(--gray-500);
     }
+
+    .short-text { display: none; }
 
     .stage-chip {
       display: inline-block;
@@ -636,11 +639,76 @@
       margin-top: 0;
     }
 
+    .tabs {
+      display: flex;
+      gap: 0;
+      margin-bottom: 1.5rem;
+      border-bottom: 2px solid rgba(255,255,255,0.08);
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+    .tabs::-webkit-scrollbar { display: none; }
+
+    .tab-select {
+      display: none;
+      width: 100%;
+      padding: 0.6rem 2rem 0.6rem 0.75rem;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: var(--radius);
+      color: var(--white);
+      font-family: var(--font-body);
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      outline: none;
+      -webkit-appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23f5c842' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 0.7rem center;
+      margin-bottom: 1rem;
+    }
+
+    .tab-select option { background: var(--gray-900); color: var(--white); }
+
+    .tab-btn {
+      flex: 1;
+      padding: 0.75rem 0.5rem;
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -2px;
+      color: var(--gray-500);
+      font-family: var(--font-body);
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.15s;
+      text-align: center;
+    }
+
+    .tab-btn:hover {
+      color: var(--white);
+    }
+
+    .tab-btn.active {
+      color: var(--gold);
+      border-bottom-color: var(--gold);
+    }
+
+    .tab-panel {
+      display: none;
+    }
+
+    .tab-panel.active {
+      display: block;
+    }
+
     .gb-bar-row {
       display: flex;
       align-items: center;
       gap: 0.5rem;
-      margin-bottom: 0.5rem;
     }
 
     .gb-bar-rank {
@@ -746,13 +814,21 @@
       .stage-table { font-size: 0.65rem; }
       .stage-table th,
       .stage-table td { padding: 0.4rem 0.3rem; }
+      .tabs { display: none !important; }
+      .tab-select { display: block; }
+      .histogram-annotations {
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+      .full-text { display: none; }
+      .short-text { display: inline; }
     }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
   <script>
     function copyCardToPng(btn) {
       var card = btn.closest('.match-card')
-      btn.textContent = '\u231B'
+      var originalText = btn.textContent
       html2canvas(card, { backgroundColor: '#1a1a16', scale: 4, useCORS: true }).then(function(canvas) {
         canvas.toBlob(function(blob) {
           try {
@@ -819,6 +895,31 @@
         <p>Loading insights...</p>
       </div>
     </div>
+
+    <select class="tab-select" id="tab-select">
+      <option value="crowd">Crowd Wisdom</option>
+      <option value="upset">Upset Tracker</option>
+      <option value="points">Points Distribution</option>
+      <option value="accuracy">Accuracy Over Time</option>
+      <option value="golden-boot">Golden Boot</option>
+      <option value="stage">Stage Breakdown</option>
+    </select>
+
+    <div class="tabs" id="main-tabs" style="display:none">
+      <button class="tab-btn active" data-tab="crowd">Crowd Wisdom</button>
+      <button class="tab-btn" data-tab="upset">Upset Tracker</button>
+      <button class="tab-btn" data-tab="points">Points Distribution</button>
+      <button class="tab-btn" data-tab="accuracy">Accuracy Over Time</button>
+      <button class="tab-btn" data-tab="golden-boot">Golden Boot</button>
+      <button class="tab-btn" data-tab="stage">Stage Breakdown</button>
+    </div>
+
+    <div id="tab-crowd" class="tab-panel active"></div>
+    <div id="tab-upset" class="tab-panel"></div>
+    <div id="tab-points" class="tab-panel"></div>
+    <div id="tab-accuracy" class="tab-panel"></div>
+    <div id="tab-golden-boot" class="tab-panel"></div>
+    <div id="tab-stage" class="tab-panel"></div>
   </div>
 
   <script type="module">
@@ -878,6 +979,14 @@
       return months[parseInt(parts[1], 10) - 1] + ' ' + parseInt(parts[2], 10)
     }
 
+    function fmtDateIST(utcStr) {
+      if (!utcStr) return ''
+      var d = new Date(utcStr)
+      d = new Date(d.getTime() + (5.5 * 60 * 60 * 1000))
+      var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+      return months[d.getUTCMonth()] + ' ' + d.getUTCDate()
+    }
+
     function renderError(msg) {
       app.innerHTML = '<div class="error-msg"><p>' + msg + '</p></div>'
     }
@@ -909,6 +1018,11 @@
       const usernameMap = {}
       for (const u of leaderboard) {
         if (u.id && u.username) usernameMap[u.id] = u.username
+      }
+
+      const kickoffMap = {}
+      for (const am of allMatches) {
+        kickoffMap[am.id] = am.kickoff_utc
       }
 
       const matchMap = {}
@@ -1110,18 +1224,6 @@
       html += renderAllCrowd('all', crowdPage)
       html += '</div>'
 
-      setTimeout(function() {
-        var sel = document.getElementById('crowd-filter')
-        if (sel) {
-          sel.addEventListener('change', function() {
-            crowdPage = 1
-            document.getElementById('crowd-results').innerHTML = renderAllCrowd(sel.value, crowdPage)
-            attachPageListeners()
-          })
-        }
-        attachPageListeners()
-      }, 0)
-
       function attachPageListeners() {
         var btns = document.querySelectorAll('#crowd-results .page-btn')
         btns.forEach(function(btn) {
@@ -1246,11 +1348,13 @@
       for (var di = 0; di < predictions.length; di++) {
         var dp = predictions[di]
         if (dp.is_result_correct === null) continue
-        var dkey = dp.matches.match_date
-        if (!byDate[dkey]) byDate[dkey] = { resultCorrect: 0, scoreCorrect: 0, total: 0 }
-        byDate[dkey].total++
-        if (dp.is_result_correct) byDate[dkey].resultCorrect++
-        if (dp.is_score_correct) byDate[dkey].scoreCorrect++
+        var ko = kickoffMap[dp.matches.id]
+        var sortKey = dp.matches.match_date
+        var displayKey = ko ? fmtDateIST(ko) : dp.matches.match_date
+        if (!byDate[sortKey]) byDate[sortKey] = { resultCorrect: 0, scoreCorrect: 0, total: 0, label: displayKey }
+        byDate[sortKey].total++
+        if (dp.is_result_correct) byDate[sortKey].resultCorrect++
+        if (dp.is_score_correct) byDate[sortKey].scoreCorrect++
       }
 
       var dates = Object.keys(byDate).sort()
@@ -1258,7 +1362,7 @@
         html += '<div class="no-data">No scored predictions yet.</div>'
       } else {
         html += '<div class="card"><div class="table-wrap"><table class="accuracy-table">'
-        html += '<thead><tr><th>Date</th><th>Result Accuracy</th><th>Score Accuracy</th><th>Predictions</th></tr></thead><tbody>'
+        html += '<thead><tr><th>Date</th><th>Result Acc</th><th>Score Acc</th><th><span class="full-text">Predictions</span><span class="short-text">Preds</span></th></tr></thead><tbody>'
         for (var d = 0; d < dates.length; d++) {
           var dd = dates[d]
           var data = byDate[dd]
@@ -1266,7 +1370,7 @@
           var scorePct = data.total > 0 ? Math.round((data.scoreCorrect / data.total) * 100) : 0
           var rClass = resultPct >= 60 ? 'high' : resultPct >= 40 ? 'mid' : 'low'
           var sClass = scorePct >= 20 ? 'high' : scorePct >= 10 ? 'mid' : 'low'
-          html += '<tr><td>' + fmtDate(dd) + '</td>'
+          html += '<tr><td>' + data.label + '</td>'
           html += '<td><span class="accuracy-pct ' + rClass + '">' + resultPct + '%</span></td>'
           html += '<td><span class="accuracy-pct ' + sClass + '">' + scorePct + '%</span></td>'
           html += '<td class="accuracy-predictions">' + data.total + '</td></tr>'
@@ -1296,7 +1400,7 @@
 
         var maxPick = sorted[0][1]
 
-        html += '<div class="card">'
+        html += '<div class="card" style="display:flex;flex-direction:column;gap:0.5rem">'
         for (var si = 0; si < sorted.length; si++) {
           var sname = sorted[si][0]
           var scount = sorted[si][1]
@@ -1410,7 +1514,69 @@
         })
       }, 0)
 
-      app.innerHTML = html
+      // Distribute sections into tab panels instead of rendering to app
+      document.getElementById('main-tabs').style.display = 'flex'
+
+      var sections = [
+        { marker: '<h2 class="section-title">Crowd Wisdom</h2>', panel: 'tab-crowd' },
+        { marker: '<h2 class="section-title">Upset Tracker</h2>', panel: 'tab-upset' },
+        { marker: '<h2 class="section-title">Points Distribution</h2>', panel: 'tab-points' },
+        { marker: '<h2 class="section-title">Accuracy Over Time</h2>', panel: 'tab-accuracy' },
+        { marker: '<h2 class="section-title">Golden Boot Buzz</h2>', panel: 'tab-golden-boot' },
+        { marker: '<h2 class="section-title">Stage Breakdown</h2>', panel: 'tab-stage' }
+      ]
+
+      for (var si = 0; si < sections.length; si++) {
+        var sec = sections[si]
+        var idx = html.indexOf(sec.marker)
+        if (idx === -1) continue
+        var endIdx = si < sections.length - 1 ? html.indexOf(sections[si + 1].marker) : html.length
+        if (endIdx === -1) endIdx = html.length
+        var content = html.substring(idx, endIdx).trim()
+        var panel = document.getElementById(sec.panel)
+        if (panel) panel.innerHTML = content
+      }
+
+      // Clear loading state
+      app.innerHTML = ''
+
+      // Tab switching
+      function switchTab(tabId) {
+        document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active') })
+        document.querySelectorAll('.tab-panel').forEach(function(p) { p.classList.remove('active') })
+        var btn = document.querySelector('.tab-btn[data-tab="' + tabId + '"]')
+        if (btn) btn.classList.add('active')
+        var target = document.getElementById('tab-' + tabId)
+        if (target) target.classList.add('active')
+        var sel = document.getElementById('tab-select')
+        if (sel) sel.value = tabId
+      }
+
+      document.querySelectorAll('.tab-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          switchTab(btn.getAttribute('data-tab'))
+        })
+      })
+
+      var tabSelect = document.getElementById('tab-select')
+      if (tabSelect) {
+        tabSelect.addEventListener('change', function() {
+          switchTab(tabSelect.value)
+        })
+      }
+
+      // Attach crowd filter/pagination listeners after DOM is populated
+      setTimeout(function() {
+        var sel = document.getElementById('crowd-filter')
+        if (sel) {
+          sel.addEventListener('change', function() {
+            crowdPage = 1
+            document.getElementById('crowd-results').innerHTML = renderAllCrowd(sel.value, crowdPage)
+            attachPageListeners()
+          })
+        }
+        attachPageListeners()
+      }, 0)
 
     } catch (err) {
       renderError('Something went wrong: ' + err.message)
