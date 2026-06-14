@@ -168,15 +168,17 @@ export default function Leaderboard() {
   function PointsTooltip({ rowId }) {
     if (!tooltip || tooltip.id !== rowId) return null
     const preds = allPredictions.filter(p => p.user_id === rowId && p.match_id !== 9999)
-    const resultPts = preds.filter(p => p.is_result_correct && !p.is_score_correct).length * 3
-    const scorePts  = preds.filter(p => p.is_score_correct).length * 5
-    const gbPts     = table.find(r => r.id === rowId)?.goldenBootCorrect ? 10 : 0
-    const total     = resultPts + scorePts + gbPts
+    const crCount  = preds.filter(p => p.points_earned >= 3).length  // all correct results (incl. exact)
+    const csCount  = preds.filter(p => p.points_earned === 5).length  // exact scorelines
+    const crPts    = crCount * 3
+    const csPts    = csCount * 2
+    const gbPts    = table.find(r => r.id === rowId)?.goldenBootCorrect ? 10 : 0
+    const total    = crPts + csPts + gbPts
     return (
-      <div style={{ position: 'fixed', top: tooltip.y, left: Math.min(tooltip.x, window.innerWidth - 200), zIndex: 400, background: 'var(--gray-900)', border: '1px solid rgba(245,200,66,0.3)', borderRadius: '8px', padding: '0.65rem 0.875rem', fontSize: '0.78rem', color: 'var(--gray-300)', pointerEvents: 'none', minWidth: '160px', boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}>
+      <div style={{ position: 'fixed', top: tooltip.y, left: Math.min(tooltip.x, window.innerWidth - 200), zIndex: 400, background: 'var(--gray-900)', border: '1px solid rgba(245,200,66,0.3)', borderRadius: '8px', padding: '0.65rem 0.875rem', fontSize: '0.78rem', color: 'var(--gray-300)', pointerEvents: 'none', minWidth: '180px', boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}>
         <div style={{ fontWeight: 700, color: 'var(--gold)', marginBottom: '0.4rem', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Points breakdown</div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem' }}><span>Correct results (+3)</span><span style={{ color: 'var(--white)', fontWeight: 600 }}>{resultPts}</span></div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem' }}><span>Exact scorelines (+2 bonus)</span><span style={{ color: 'var(--white)', fontWeight: 600 }}>{scorePts - (preds.filter(p => p.is_score_correct).length * 3)}</span></div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem' }}><span>Correct results (+3) &times; {crCount}</span><span style={{ color: 'var(--white)', fontWeight: 600 }}>{crPts} pts</span></div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem' }}><span>Exact scoreline (+2) &times; {csCount}</span><span style={{ color: 'var(--white)', fontWeight: 600 }}>{csPts} pts</span></div>
         {gbPts > 0 && <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem' }}><span>Golden Boot 🥇</span><span style={{ color: 'var(--gold)', fontWeight: 600 }}>+{gbPts}</span></div>}
         <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', marginTop: '0.4rem', paddingTop: '0.4rem', display: 'flex', justifyContent: 'space-between', fontWeight: 700, color: 'var(--white)' }}><span>Total</span><span>{total}</span></div>
       </div>
