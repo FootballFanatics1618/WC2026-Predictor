@@ -593,23 +593,17 @@ export default function Admin() {
                 🔄 SCORE SYNC
               </h2>
               <p style={{fontSize:'0.85rem',color:'var(--gray-400)',marginBottom:'1rem',lineHeight:'1.6'}}>
-                The sync function runs automatically via pg_cron at 8 scheduled times per day —
-                timed to fire ~30 min after each match window ends. No constant polling.
-                Use <strong style={{color:'var(--white)'}}>Sync Now</strong> to trigger manually if a result seems delayed.
+                The sync function runs automatically via pg_cron <strong style={{color:'var(--white)'}}>every 5 minutes</strong> during
+                all possible match hours (16:00–07:00 UTC). Results appear in the app within ~5 minutes of full time.
+                Use <strong style={{color:'var(--white)'}}>Sync Now</strong> to trigger immediately if a result seems delayed.
               </p>
 
               {/* Schedule display */}
               <div style={{background:'rgba(0,0,0,0.2)',borderRadius:'var(--radius)',padding:'0.875rem 1rem',marginBottom:'1.25rem',fontSize:'0.8rem',color:'var(--gray-400)',lineHeight:'1.8'}}>
                 <div style={{color:'var(--gold)',fontWeight:700,marginBottom:'0.4rem',fontSize:'0.75rem',letterSpacing:'0.06em'}}>CRON SCHEDULE</div>
-                <div style={{display:'grid',gridTemplateColumns:'100px 130px 1fr',gap:'0.1rem 0.75rem'}}>
-                  <span style={{color:'var(--gray-500)'}}>UTC</span><span style={{color:'var(--gray-500)'}}>IST</span><span style={{color:'var(--gray-500)'}}>After kick-off</span>
-                  <span>18:30 · 18:50</span><span>00:00 · 00:20 IST</span><span>12:00 ET matches</span>
-                  <span>21:30 · 21:50</span><span>03:00 · 03:20 IST</span><span>15:00 ET matches</span>
-                  <span>00:30 · 00:50</span><span>06:00 · 06:20 IST</span><span>18:00 ET matches</span>
-                  <span>03:30 · 03:50</span><span>09:00 · 09:20 IST</span><span>21:00 ET matches</span>
-                  <span>07:30 · 07:50</span><span>13:00 · 13:20 IST</span><span>02:00 ET matches</span>
-                </div>
-                <div style={{marginTop:'0.5rem',color:'var(--gray-500)'}}>+ safety catchall every 3 hours</div>
+                <div style={{fontFamily:'monospace',color:'var(--white)',marginBottom:'0.4rem'}}>*/5 16-23,0-7 * * *</div>
+                <div>Fires every 5 min · 16:00–07:00 UTC (21:30 IST – 12:30 IST next day)</div>
+                <div style={{marginTop:'0.4rem',color:'var(--gray-500)'}}>Covers all ET kick-off slots (12:00 ET – 02:00 ET) with ~4 hrs buffer</div>
               </div>
 
               <div style={{display:'flex',gap:'0.75rem',alignItems:'center',flexWrap:'wrap'}}>

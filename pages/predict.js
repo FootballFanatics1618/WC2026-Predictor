@@ -17,6 +17,13 @@ function isPredLocked(match) {
   return isMatchPredictionLocked(match.match_date, match.match_time, match.kickoff_utc)
 }
 
+function isMatchLive(match) {
+  if (isMatchCompleted(match) || !match.kickoff_utc) return false
+  const now = Date.now()
+  const kickoff = new Date(match.kickoff_utc).getTime()
+  return now >= kickoff && now <= kickoff + 2 * 60 * 60 * 1000
+}
+
 function getResultLabel(result, teamA, teamB) {
   if (result === 'teamA') return `${teamA} Win`
   if (result === 'teamB') return `${teamB} Win`
@@ -24,9 +31,10 @@ function getResultLabel(result, teamA, teamB) {
   return ''
 }
 
-function MatchCard({ match, saved, localPred, isEditing, isSaving, onResultChange, onScorelineChange, onSave, onEdit, penaltyWinner, onPenaltyWinnerChange }) {
+function MatchCard({ match, saved, localPred, isEditing, isSaving, onResultChange, onScorelineChange, onSave, onEdit, penaltyWinner, onPenaltyWinnerChange, consensus }) {
   const completed = isMatchCompleted(match)
   const predLocked = isPredLocked(match)
+  const live = isMatchLive(match)
   const pred = localPred || (saved ? { result: saved.predicted_result, scoreA: saved.predicted_score_a, scoreB: saved.predicted_score_b } : null)
   const isKnockout = match.stage !== 'Group Stage'
   const isDrawET = pred?.result === 'draw_et'
@@ -44,7 +52,16 @@ function MatchCard({ match, saved, localPred, isEditing, isSaving, onResultChang
 
   return (
     <div className={`match-card ${completed ? 'completed' : ''} ${hasPrediction && !completed ? 'predicted' : ''}`}
-      style={{ width: '100%', boxSizing: 'border-box' }}>
+      style={{ width: '100%', boxSizing: 'border-box', border: live ? '1px solid rgba(239,68,68,0.5)' : undefined }}>
+
+      {/* LIVE banner */}
+      {live && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.6rem', padding: '0.35rem 0.75rem', background: 'rgba(239,68,68,0.12)', borderRadius: '6px' }}>
+          <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#ef4444', display: 'inline-block', animation: 'pulse 1.2s infinite' }} />
+          <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#ef4444', letterSpacing: '0.08em' }}>LIVE NOW</span>
+          <span style={{ fontSize: '0.72rem', color: 'var(--gray-500)', marginLeft: 'auto' }}>Result syncs within 5 min of FT</span>
+        </div>
+      )}
 
       {/* Top bar: stage/time + status */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.6rem', flexWrap: 'wrap', gap: '0.4rem' }}>
@@ -76,13 +93,20 @@ function MatchCard({ match, saved, localPred, isEditing, isSaving, onResultChang
       {/* Teams — large, centered */}
       <div className="match-teams">
         <span style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, justifyContent: 'flex-end' }}>
-          <span style={{ textAlign: 'right' }}>{match.team_a}</span>
-          <FlagImg team={match.team_a} size={26} />
+          <span style={{
+            textAlign: 'right',
+            color: completed && match.result === 'teamA' ? 'var(--gold)' : completed && match.result === 'teamB' ? 'var(--gray-500)' : 'inherit',
+            fontWeight: completed && match.result === 'teamA' ? 700 : 'inherit',
+          }}>{match.team_a}</span>
+          <FlagImg team={match.team_a} size={26} style={{ opacity: completed && match.result === 'teamB' ? 0.45 : 1 }} />
         </span>
         <span className="match-vs" style={{ flexShrink: 0 }}>vs</span>
         <span style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, justifyContent: 'flex-start' }}>
-          <FlagImg team={match.team_b} size={26} />
-          <span>{match.team_b}</span>
+          <FlagImg team={match.team_b} size={26} style={{ opacity: completed && match.result === 'teamA' ? 0.45 : 1 }} />
+          <span style={{
+            color: completed && match.result === 'teamB' ? 'var(--gold)' : completed && match.result === 'teamA' ? 'var(--gray-500)' : 'inherit',
+            fontWeight: completed && match.result === 'teamB' ? 700 : 'inherit',
+          }}>{match.team_b}</span>
         </span>
       </div>
 
@@ -105,6 +129,25 @@ function MatchCard({ match, saved, localPred, isEditing, isSaving, onResultChang
               }
             </div>
           )}
+        </div>
+      )}
+
+      {/* Prediction consensus bar — shown on completed matches */}
+      {completed && consensus && consensus.total > 0 && (
+        <div style={{ marginBottom: '0.75rem' }}>
+          <div style={{ fontSize: '0.7rem', color: 'var(--gray-500)', marginBottom: '0.3rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            Group prediction — {consensus.total} pick{consensus.total !== 1 ? 's' : ''}
+          </div>
+          <div style={{ display: 'flex', height: '6px', borderRadius: '99px', overflow: 'hidden', gap: '2px' }}>
+            {consensus.pctA > 0 && <div style={{ width: `${consensus.pctA}%`, background: '#3b82f6', borderRadius: '99px 0 0 99px', transition: 'width 0.4s' }} />}
+            {consensus.pctDraw > 0 && <div style={{ width: `${consensus.pctDraw}%`, background: 'var(--gray-500)' }} />}
+            {consensus.pctB > 0 && <div style={{ width: `${consensus.pctB}%`, background: '#f59e0b', borderRadius: '0 99px 99px 0', transition: 'width 0.4s' }} />}
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.3rem', fontSize: '0.72rem' }}>
+            <span style={{ color: '#3b82f6' }}>{match.team_a} {consensus.pctA}%</span>
+            {consensus.pctDraw > 0 && <span style={{ color: 'var(--gray-500)' }}>Draw {consensus.pctDraw}%</span>}
+            <span style={{ color: '#f59e0b' }}>{match.team_b} {consensus.pctB}%</span>
+          </div>
         </div>
       )}
 
@@ -191,6 +234,7 @@ export default function Predict() {
   const [selectedUpcomingDate, setSelectedUpcomingDate] = useState(null)
   const [now, setNow] = useState(new Date())
   const [penaltyWinners, setPenaltyWinners] = useState({})
+  const [consensus, setConsensus] = useState({})
   const upcomingDateRef = useRef(null)
   const upcomingScrollRef = useDragScroll()
   const userRef = useRef(null)
@@ -268,10 +312,11 @@ export default function Predict() {
     setUser(session.user)
     userRef.current = session.user
 
-    const [profileRes, matchesRes, predsRes] = await Promise.all([
+    const [profileRes, matchesRes, predsRes, allPredsRes] = await Promise.all([
       supabase.from('profiles').select('*').eq('id', session.user.id).single(),
       supabase.from('matches').select('*').order('match_date').order('match_time'),
       supabase.from('predictions').select('*').eq('user_id', session.user.id),
+      supabase.from('predictions').select('match_id, predicted_result'),
     ])
 
     setProfile(profileRes.data)
@@ -281,10 +326,32 @@ export default function Predict() {
       const { data: newProfile } = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
       setProfile(newProfile)
     }
-    setMatches(matchesRes.data || [])
+    const allMatches = matchesRes.data || []
+    setMatches(allMatches)
     const predsMap = {}
     ;(predsRes.data || []).forEach(p => { predsMap[p.match_id] = p })
+
+    // Build consensus map: matchId → { total, pctA, pctB, pctDraw }
+    const consensusRaw = {}
+    ;(allPredsRes.data || []).forEach(p => {
+      if (!consensusRaw[p.match_id]) consensusRaw[p.match_id] = { teamA: 0, teamB: 0, draw: 0 }
+      if (p.predicted_result === 'teamA') consensusRaw[p.match_id].teamA++
+      else if (p.predicted_result === 'teamB') consensusRaw[p.match_id].teamB++
+      else if (p.predicted_result === 'draw') consensusRaw[p.match_id].draw++
+    })
+    const consensusMap = {}
+    Object.entries(consensusRaw).forEach(([mid, c]) => {
+      const total = c.teamA + c.teamB + c.draw
+      consensusMap[mid] = {
+        total,
+        pctA: total ? Math.round((c.teamA / total) * 100) : 0,
+        pctB: total ? Math.round((c.teamB / total) * 100) : 0,
+        pctDraw: total ? Math.round((c.draw / total) * 100) : 0,
+      }
+    })
+    setConsensus(consensusMap)
     setSavedPredictions(predsMap)
+    setTab('upcoming')
     setLoading(false)
     if (router.query.welcome) setMessage("🎉 Welcome! Now predict today's matches!")
   }
@@ -409,6 +476,10 @@ export default function Predict() {
 
   const isGbLocked = new Date() >= TOURNAMENT_START
 
+  const totalPredictable = matches.filter(m => !isMatchCompleted(m) || savedPredictions[m.id]).length
+  const totalPredicted = Object.keys(savedPredictions).length
+  const progressPct = matches.length > 0 ? Math.round((totalPredicted / matches.length) * 100) : 0
+
   if (loading) return (
     <><Navbar user={user} /><div style={{ textAlign: 'center', paddingTop: '5rem', color: 'var(--gray-500)' }}>Loading matches...</div></>
   )
@@ -452,7 +523,28 @@ export default function Predict() {
           </div>
         )}
 
-        <h1 className="section-title" style={{ maxWidth: '700px', margin: '0 auto 1rem' }}>MATCH PREDICTIONS</h1>
+        <div style={{ maxWidth: '700px', margin: '0 auto 1.25rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
+            <h1 className="section-title" style={{ margin: 0 }}>MATCH PREDICTIONS</h1>
+            <span style={{ fontSize: '0.78rem', color: 'var(--gray-500)', fontWeight: 600 }}>
+              {totalPredicted} <span style={{ color: 'var(--gray-700)' }}>/</span> {matches.length} predicted
+            </span>
+          </div>
+          <div style={{ height: '4px', background: 'rgba(255,255,255,0.08)', borderRadius: '99px', overflow: 'hidden' }}>
+            <div style={{ height: '100%', width: `${progressPct}%`, background: 'linear-gradient(90deg, var(--success), var(--gold))', borderRadius: '99px', transition: 'width 0.4s ease' }} />
+          </div>
+        </div>
+
+        {/* Empty state — no predictions at all yet */}
+        {Object.keys(savedPredictions).length === 0 && matches.filter(m => !isMatchCompleted(m)).length > 0 && (
+          <div style={{ maxWidth: '700px', margin: '0 auto 1.25rem', padding: '0.85rem 1.1rem', background: 'rgba(245,200,66,0.06)', border: '1px solid rgba(245,200,66,0.2)', borderRadius: 'var(--radius)', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <span style={{ fontSize: '1.4rem' }}>🎯</span>
+            <div>
+              <div style={{ fontWeight: 600, color: 'var(--gold)', fontSize: '0.9rem' }}>No predictions yet!</div>
+              <div style={{ color: 'var(--gray-500)', fontSize: '0.8rem', marginTop: '2px' }}>Pick your results below — predictions lock 1 hour before each match.</div>
+            </div>
+          </div>
+        )}
 
         <div className="tabs" style={{ maxWidth: '700px', margin: '0 auto 1.5rem' }}>
           <button className={`tab-btn ${tab === 'upcoming' ? 'active' : ''}`} onClick={() => { const y = window.scrollY; setTab('upcoming'); requestAnimationFrame(() => window.scrollTo(0, y)) }}>
@@ -469,7 +561,11 @@ export default function Predict() {
         {/* TODAY */}
         {tab === 'today' && (
           todayMatches.length === 0
-            ? <div className="card" style={{ maxWidth: '700px', margin: '0 auto', textAlign: 'center', padding: '3rem', color: 'var(--gray-500)' }}>No matches today. Check upcoming!</div>
+            ? <div className="card" style={{ maxWidth: '700px', margin: '0 auto', textAlign: 'center', padding: '3rem' }}>
+                <div style={{ fontSize: '2rem', marginBottom: '0.75rem' }}>📅</div>
+                <div style={{ color: 'var(--gray-300)', fontWeight: 600, marginBottom: '0.4rem' }}>No matches today</div>
+                <div style={{ color: 'var(--gray-500)', fontSize: '0.85rem' }}>Check the Upcoming tab to predict future matches.</div>
+              </div>
             : <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxWidth: '700px', margin: '0 auto' }}>
                 {todayMatches.map(m => (
                   <MatchCard
@@ -484,6 +580,7 @@ export default function Predict() {
                     onEdit={handleEdit}
                     penaltyWinner={penaltyWinners[m.id]}
                     onPenaltyWinnerChange={handlePenaltyWinnerChange}
+                    consensus={consensus[m.id]}
                   />
                 ))}
               </div>
@@ -574,6 +671,7 @@ export default function Predict() {
                     onEdit={handleEdit}
                     penaltyWinner={penaltyWinners[m.id]}
                     onPenaltyWinnerChange={handlePenaltyWinnerChange}
+                    consensus={consensus[m.id]}
                   />
                 ))}
               </div>

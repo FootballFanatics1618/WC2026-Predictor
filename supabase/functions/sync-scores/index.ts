@@ -56,6 +56,26 @@ interface DbMatch {
   knockout_slot: string | null
 }
 
+// ─── Team name aliases ────────────────────────────────────────────────────────
+// The API uses different team names than our DB in some cases.
+// Map API names → DB names so team-name matching works correctly.
+
+const TEAM_NAME_ALIASES: Record<string, string> = {
+  'czech republic': 'czechia',
+  'united states': 'usa',
+  'curaçao': 'curacao',
+  'curacao': 'curacao',
+  'dr congo': 'dr congo',
+  'democratic republic of congo': 'dr congo',
+  'ivory coast': 'ivory coast',
+  "côte d'ivoire": 'ivory coast',
+}
+
+function normalizeTeam(name: string): string {
+  const lower = name.toLowerCase().trim()
+  return TEAM_NAME_ALIASES[lower] ?? lower
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function extractScore(m: ApiMatch): { home: number | null; away: number | null } {
@@ -112,20 +132,28 @@ Deno.serve(async (req) => {
     const apiData = await apiRes.json()
     const apiMatches: ApiMatch[] = apiData.games ?? []
 
-    // Build a quick lookup: api_id (string) → api match
-    // The API id field may match our DB id directly — depends on the API
+    // Build a lookup by normalised team-name pair: "teamA|teamB" → api match
+    // The API uses different IDs than our DB, so we match by team names instead.
     const apiMap: Record<string, ApiMatch> = {}
     for (const m of apiMatches) {
-      apiMap[String(m.id)] = m
+      if (!m.home_team_name_en || !m.away_team_name_en) continue
+      const home = normalizeTeam(m.home_team_name_en)
+      const away = normalizeTeam(m.away_team_name_en)
+      apiMap[`${home}|${away}`] = m
     }
 
     // ── Step 3: For each pending DB match, check if API says it's done ───────
     for (const dbMatch of pendingMatches as DbMatch[]) {
-      const apiMatch = apiMap[String(dbMatch.id)]
+      if (!dbMatch.team_a || !dbMatch.team_b) continue
+      const keyAB = `${normalizeTeam(dbMatch.team_a)}|${normalizeTeam(dbMatch.team_b)}`
+      const keyBA = `${normalizeTeam(dbMatch.team_b)}|${normalizeTeam(dbMatch.team_a)}`
+      const apiMatch = apiMap[keyAB] ?? apiMap[keyBA]
+      // Track whether home/away are swapped so we assign scores correctly
+      const swapped = !apiMap[keyAB] && !!apiMap[keyBA]
 
       if (!apiMatch) {
-        // API doesn't have this match ID yet — skip silently
-        console.log(`[sync-scores] Match ${dbMatch.id} not found in API response`)
+        // API doesn't have this match yet — skip silently
+        console.log(`[sync-scores] Match ${dbMatch.id} (${dbMatch.team_a} vs ${dbMatch.team_b}) not found in API response`)
         continue
       }
 
@@ -134,11 +162,15 @@ Deno.serve(async (req) => {
         continue
       }
 
-      const { home, away } = extractScore(apiMatch)
-      if (home === null || away === null) {
+      const { home: rawHome, away: rawAway } = extractScore(apiMatch)
+      if (rawHome === null || rawAway === null) {
         log.errors.push(`Match ${dbMatch.id}: finished but scores missing in API`)
         continue
       }
+
+      // If API has teams in opposite order, swap so score_a = team_a, score_b = team_b
+      const home = swapped ? rawAway : rawHome
+      const away = swapped ? rawHome : rawAway
 
       const result = deriveResult(home, away)
 
