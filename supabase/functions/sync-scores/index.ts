@@ -127,7 +127,12 @@ Deno.serve(async (req) => {
     console.log(`[sync-scores] Found ${pendingMatches.length} unresolved past matches`)
 
     // ── Step 2: Fetch all matches from API ───────────────────────────────────
-    const apiRes = await fetch(`${API_BASE}/games`)
+    const apiRes = await fetch(`${API_BASE}/games`, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json',
+      }
+    })
     if (!apiRes.ok) throw new Error(`API error: ${apiRes.status}`)
     const apiData = await apiRes.json()
     const apiMatches: ApiMatch[] = apiData.games ?? []

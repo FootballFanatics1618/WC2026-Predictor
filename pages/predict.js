@@ -143,10 +143,10 @@ function MatchCard({ match, saved, localPred, isEditing, isSaving, onResultChang
             {consensus.pctDraw > 0 && <div style={{ width: `${consensus.pctDraw}%`, background: 'var(--gray-500)' }} />}
             {consensus.pctB > 0 && <div style={{ width: `${consensus.pctB}%`, background: '#f59e0b', borderRadius: '0 99px 99px 0', transition: 'width 0.4s' }} />}
           </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.3rem', fontSize: '0.72rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', marginTop: '0.3rem', fontSize: '0.72rem', gap: '0.25rem' }}>
             <span style={{ color: '#3b82f6' }}>{match.team_a} {consensus.pctA}%</span>
-            {consensus.pctDraw > 0 && <span style={{ color: 'var(--gray-500)' }}>Draw {consensus.pctDraw}%</span>}
-            <span style={{ color: '#f59e0b' }}>{match.team_b} {consensus.pctB}%</span>
+            <span style={{ color: 'var(--gray-500)', textAlign: 'center' }}>{consensus.pctDraw > 0 ? `Draw ${consensus.pctDraw}%` : ''}</span>
+            <span style={{ color: '#f59e0b', textAlign: 'right' }}>{match.team_b} {consensus.pctB}%</span>
           </div>
         </div>
       )}
@@ -360,8 +360,8 @@ export default function Predict() {
   // Today: matches whose IST date is today
   // Upcoming: future IST dates (not today)
   // Completed: matches with result entered
-  const todayMatches = matches.filter(m => isISTToday(m))
-  const upcomingMatches = matches.filter(m => !isISTToday(m) && !isISTPastDay(m))
+  const todayMatches = matches.filter(m => isISTToday(m) || isMatchLive(m))
+  const upcomingMatches = matches.filter(m => !isISTToday(m) && !isISTPastDay(m) && !isMatchLive(m))
   const completedMatches = matches.filter(m => isMatchCompleted(m))
 
   // Group upcoming by IST date for the date-chip strip
