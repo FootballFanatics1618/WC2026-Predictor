@@ -3,8 +3,12 @@ import { useRouter } from 'next/router'
 import Navbar from '../components/Navbar'
 import FlagImg from '../components/FlagImg'
 import { supabase } from '../lib/supabase'
-import { toIST } from '../lib/flags'
+import { toIST, toISTFull } from '../lib/flags'
 import { format, parseISO, isToday, isBefore, startOfDay } from 'date-fns'
+
+const ADMIN_EMAILS = process.env.NEXT_PUBLIC_ADMIN_EMAILS
+  ? process.env.NEXT_PUBLIC_ADMIN_EMAILS.split(',').map(e => e.trim())
+  : []
 
 export default function Others() {
   const router = useRouter()
@@ -23,6 +27,7 @@ export default function Others() {
   async function init() {
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) { router.push('/login'); return }
+    if (!ADMIN_EMAILS.includes(session.user.email)) { router.replace('/'); return }
     setUser(session.user)
     setMyId(session.user.id)
 
@@ -89,7 +94,12 @@ export default function Others() {
             <button onClick={() => { setSelectedDate(null); setSelectedMatch(null) }} style={{ background: 'none', border: 'none', color: 'var(--gray-500)', cursor: 'pointer', padding: 0 }}>Others' Picks</button>
             <span>›</span>
             <button onClick={() => setSelectedMatch(null)} style={{ background: 'none', border: 'none', color: 'var(--gray-500)', cursor: 'pointer', padding: 0 }}>
-              {isToday(parseISO(match.match_date)) ? 'Today' : format(parseISO(match.match_date), 'EEE, MMM d')}
+              {(() => {
+                const { dayOffset } = toISTFull(match.match_time)
+                const baseDate = parseISO(match.match_date)
+                const istDate = dayOffset ? new Date(baseDate.getTime() + 86400000) : baseDate
+                return isToday(istDate) ? 'Today' : format(istDate, 'EEE, MMM d')
+              })()}
             </button>
             <span>›</span>
             <span style={{ color: 'var(--white)' }}>{match.team_a} vs {match.team_b}</span>
@@ -98,7 +108,7 @@ export default function Others() {
           {/* Match header */}
           <div className="card-gold" style={{ marginBottom: '1.5rem' }}>
             <div style={{ fontSize: '0.72rem', color: 'var(--gray-500)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.75rem' }}>
-              {match.stage}{match.group_name ? ` · Group ${match.group_name}` : ''} · {toIST(match.match_time)} · {match.venue}
+              {match.stage}{match.group_name ? ` · Group ${match.group_name}` : ''} · {toIST(match.match_time, match.kickoff_utc)} · {match.venue}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '1.5rem', flexWrap: 'wrap' }}>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
@@ -111,6 +121,7 @@ export default function Others() {
                   : <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.2rem', color: 'var(--gray-500)' }}>VS</div>
                 }
                 {isCompleted && <div style={{ fontSize: '0.75rem', color: 'var(--gray-500)', marginTop: '4px' }}>Final Score</div>}
+                {isCompleted && match.won_on_penalties && <div style={{ fontSize: '0.75rem', color: 'var(--gold)', fontWeight: 600, marginTop: '2px' }}>Won on penalties</div>}
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
                 <FlagImg team={match.team_b} size={40} />
@@ -226,10 +237,11 @@ export default function Others() {
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.6rem', flexWrap: 'wrap', gap: '0.5rem' }}>
                     <span style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--gray-500)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                      {match.stage}{match.group_name ? ` · Group ${match.group_name}` : ''} · {toIST(match.match_time)}
+                      {match.stage}{match.group_name ? ` · Group ${match.group_name}` : ''} · {toIST(match.match_time, match.kickoff_utc)}
                     </span>
                     <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
                       {isCompleted && <span className="match-result-badge">{match.score_a}–{match.score_b}</span>}
+                      {isCompleted && match.won_on_penalties && <span style={{ fontSize: '0.68rem', color: 'var(--gold)', fontWeight: 600 }}>pen</span>}
                       <span style={{ fontSize: '0.75rem', color: 'var(--gray-500)', background: 'rgba(255,255,255,0.06)', padding: '2px 8px', borderRadius: '99px' }}>
                         {totalPredictions}/{profiles.length} picks
                       </span>

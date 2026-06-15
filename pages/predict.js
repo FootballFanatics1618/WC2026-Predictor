@@ -5,16 +5,23 @@ import Navbar from '../components/Navbar'
 import FlagImg from '../components/FlagImg'
 import { supabase } from '../lib/supabase'
 import { generateScorelines, TOURNAMENT_START } from '../lib/data'
-import { toIST } from '../lib/flags'
+import { toIST, isISTToday, isISTPastDay, getISTDate } from '../lib/flags'
 import { isMatchPredictionLocked, timeUntilLock } from '../lib/locktime'
 import { useDragScroll } from '../hooks/useDragScroll'
-import { format, parseISO, isToday, isBefore, startOfDay } from 'date-fns'
+import { format, parseISO } from 'date-fns'
 
 function isMatchCompleted(match) { return match.result !== null }
 
 function isPredLocked(match) {
   if (isMatchCompleted(match)) return true
   return isMatchPredictionLocked(match.match_date, match.match_time, match.kickoff_utc)
+}
+
+function isMatchLive(match) {
+  if (isMatchCompleted(match) || !match.kickoff_utc) return false
+  const now = Date.now()
+  const kickoff = new Date(match.kickoff_utc).getTime()
+  return now >= kickoff && now <= kickoff + 2 * 60 * 60 * 1000
 }
 
 function getResultLabel(result, teamA, teamB) {
@@ -24,10 +31,13 @@ function getResultLabel(result, teamA, teamB) {
   return ''
 }
 
-function MatchCard({ match, saved, localPred, isEditing, isSaving, onResultChange, onScorelineChange, onSave, onEdit }) {
+function MatchCard({ match, saved, localPred, isEditing, isSaving, onResultChange, onScorelineChange, onSave, onEdit, penaltyWinner, onPenaltyWinnerChange, consensus }) {
   const completed = isMatchCompleted(match)
   const predLocked = isPredLocked(match)
+  const live = isMatchLive(match)
   const pred = localPred || (saved ? { result: saved.predicted_result, scoreA: saved.predicted_score_a, scoreB: saved.predicted_score_b } : null)
+  const isKnockout = match.stage !== 'Group Stage'
+  const isDrawET = pred?.result === 'draw_et'
   const scorelines = pred?.result ? generateScorelines(pred.result) : []
   const currentScoreline = pred?.scoreA !== undefined && pred?.scoreB !== undefined ? `${pred.scoreA}-${pred.scoreB}` : ''
   const isCorrectResult = completed && saved && saved.is_result_correct
@@ -37,9 +47,21 @@ function MatchCard({ match, saved, localPred, isEditing, isSaving, onResultChang
   const isLocked = predLocked || completed
   const dropdownsDisabled = isLocked || (hasPrediction && !isEditing)
 
+  // For display: detect draw-after-ET prediction (knockout + equal scores)
+  const savedIsDrawET = completed && isKnockout && saved && saved.predicted_score_a === saved.predicted_score_b
+
   return (
     <div className={`match-card ${completed ? 'completed' : ''} ${hasPrediction && !completed ? 'predicted' : ''}`}
-      style={{ width: '100%', boxSizing: 'border-box' }}>
+      style={{ width: '100%', boxSizing: 'border-box', border: live ? '1px solid rgba(239,68,68,0.5)' : undefined }}>
+
+      {/* LIVE banner */}
+      {live && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.6rem', padding: '0.35rem 0.75rem', background: 'rgba(239,68,68,0.12)', borderRadius: '6px' }}>
+          <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#ef4444', display: 'inline-block', animation: 'pulse 1.2s infinite' }} />
+          <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#ef4444', letterSpacing: '0.08em' }}>LIVE NOW</span>
+          <span style={{ fontSize: '0.72rem', color: 'var(--gray-500)', marginLeft: 'auto' }}>Result syncs within 5 min of FT</span>
+        </div>
+      )}
 
       {/* Top bar: stage/time + status */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.6rem', flexWrap: 'wrap', gap: '0.4rem' }}>
@@ -48,7 +70,7 @@ function MatchCard({ match, saved, localPred, isEditing, isSaving, onResultChang
             {match.stage}{match.group_name ? ` · Group ${match.group_name}` : ''}
           </span>
           <div style={{ fontSize: '0.78rem', color: 'var(--gray-500)', marginTop: '0.1rem', lineHeight: 1.4 }}>
-            {format(parseISO(match.match_date), 'EEE, MMM d')} · {toIST(match.match_time)}
+            {toIST(match.match_time, match.kickoff_utc)}
           </div>
           <div style={{ fontSize: '0.72rem', color: 'var(--gray-500)' }}>{match.venue}</div>
         </div>
@@ -71,13 +93,20 @@ function MatchCard({ match, saved, localPred, isEditing, isSaving, onResultChang
       {/* Teams — large, centered */}
       <div className="match-teams">
         <span style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, justifyContent: 'flex-end' }}>
-          <span style={{ textAlign: 'right' }}>{match.team_a}</span>
-          <FlagImg team={match.team_a} size={26} />
+          <span style={{
+            textAlign: 'right',
+            color: completed && match.result === 'teamA' ? 'var(--gold)' : completed && match.result === 'teamB' ? 'var(--gray-500)' : 'inherit',
+            fontWeight: completed && match.result === 'teamA' ? 700 : 'inherit',
+          }}>{match.team_a}</span>
+          <FlagImg team={match.team_a} size={26} style={{ opacity: completed && match.result === 'teamB' ? 0.45 : 1 }} />
         </span>
         <span className="match-vs" style={{ flexShrink: 0 }}>vs</span>
         <span style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, justifyContent: 'flex-start' }}>
-          <FlagImg team={match.team_b} size={26} />
-          <span>{match.team_b}</span>
+          <FlagImg team={match.team_b} size={26} style={{ opacity: completed && match.result === 'teamA' ? 0.45 : 1 }} />
+          <span style={{
+            color: completed && match.result === 'teamB' ? 'var(--gold)' : completed && match.result === 'teamA' ? 'var(--gray-500)' : 'inherit',
+            fontWeight: completed && match.result === 'teamB' ? 700 : 'inherit',
+          }}>{match.team_b}</span>
         </span>
       </div>
 
@@ -87,11 +116,38 @@ function MatchCard({ match, saved, localPred, isEditing, isSaving, onResultChang
           <span className="match-result-badge" style={{ fontSize: '1rem', padding: '0.3rem 1rem' }}>
             FT {match.score_a} – {match.score_b}
           </span>
-          {saved && (
-            <div style={{ marginTop: '0.4rem', fontSize: '0.82rem', color: 'var(--gray-500)' }}>
-              Your pick: {getResultLabel(saved.predicted_result, match.team_a, match.team_b)} {saved.predicted_score_a}–{saved.predicted_score_b}
+          {match.won_on_penalties && (
+            <div style={{ marginTop: '0.3rem', fontSize: '0.78rem', color: 'var(--gold)', fontWeight: 600 }}>
+              Won on penalties
             </div>
           )}
+          {saved && (
+            <div style={{ marginTop: '0.4rem', fontSize: '0.82rem', color: 'var(--gray-500)' }}>
+              {savedIsDrawET
+                ? <>Draw {saved.predicted_score_a}–{saved.predicted_score_b} after ET · {getResultLabel(saved.predicted_result, match.team_a, match.team_b)} on penalties</>
+                : <>Your pick: {getResultLabel(saved.predicted_result, match.team_a, match.team_b)} {saved.predicted_score_a}–{saved.predicted_score_b}</>
+              }
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Prediction consensus bar — shown on completed matches */}
+      {completed && consensus && consensus.total > 0 && (
+        <div style={{ marginBottom: '0.75rem' }}>
+          <div style={{ fontSize: '0.7rem', color: 'var(--gray-500)', marginBottom: '0.3rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            Group prediction — {consensus.total} pick{consensus.total !== 1 ? 's' : ''}
+          </div>
+          <div style={{ display: 'flex', height: '6px', borderRadius: '99px', overflow: 'hidden', gap: '2px' }}>
+            {consensus.pctA > 0 && <div style={{ width: `${consensus.pctA}%`, background: '#3b82f6', borderRadius: '99px 0 0 99px', transition: 'width 0.4s' }} />}
+            {consensus.pctDraw > 0 && <div style={{ width: `${consensus.pctDraw}%`, background: 'var(--gray-500)' }} />}
+            {consensus.pctB > 0 && <div style={{ width: `${consensus.pctB}%`, background: '#f59e0b', borderRadius: '0 99px 99px 0', transition: 'width 0.4s' }} />}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', marginTop: '0.3rem', fontSize: '0.72rem', gap: '0.25rem' }}>
+            <span style={{ color: '#3b82f6' }}>{match.team_a} {consensus.pctA}%</span>
+            <span style={{ color: 'var(--gray-500)', textAlign: 'center' }}>{consensus.pctDraw > 0 ? `Draw ${consensus.pctDraw}%` : ''}</span>
+            <span style={{ color: '#f59e0b', textAlign: 'right' }}>{match.team_b} {consensus.pctB}%</span>
+          </div>
         </div>
       )}
 
@@ -103,6 +159,7 @@ function MatchCard({ match, saved, localPred, isEditing, isSaving, onResultChang
             <select className="form-select" value={pred?.result || ''} onChange={e => onResultChange(match.id, e.target.value)} disabled={dropdownsDisabled}>
               <option value="">— Pick result —</option>
               <option value="teamA">{match.team_a} Win</option>
+              {isKnockout && <option value="draw_et">Draw after Extra Time</option>}
               {match.stage === 'Group Stage' && <option value="draw">Draw</option>}
               <option value="teamB">{match.team_b} Win</option>
             </select>
@@ -114,6 +171,16 @@ function MatchCard({ match, saved, localPred, isEditing, isSaving, onResultChang
               {scorelines.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
+          {isDrawET && (
+            <div style={{ flex: '1 1 140px', minWidth: 0 }}>
+              <label className="form-label">Penalty Winner</label>
+              <select className="form-select" value={penaltyWinner || ''} onChange={e => onPenaltyWinnerChange(match.id, e.target.value)} disabled={dropdownsDisabled}>
+                <option value="">— Winner —</option>
+                <option value="teamA">{match.team_a}</option>
+                <option value="teamB">{match.team_b}</option>
+              </select>
+            </div>
+          )}
           {hasPrediction && !isEditing ? (
             <button
               className="btn btn-ghost btn-sm"
@@ -139,9 +206,10 @@ function MatchCard({ match, saved, localPred, isEditing, isSaving, onResultChang
       {/* Locked with a saved prediction */}
       {predLocked && !completed && saved && (
         <div style={{ fontSize: '0.85rem', color: 'var(--gray-500)', marginTop: '0.4rem' }}>
-          Your pick: <strong style={{ color: 'var(--white)' }}>
-            {getResultLabel(saved.predicted_result, match.team_a, match.team_b)} — {saved.predicted_score_a}–{saved.predicted_score_b}
-          </strong>
+          {isKnockout && saved.predicted_score_a === saved.predicted_score_b
+            ? <>Your pick: <strong style={{ color: 'var(--white)' }}>Draw {saved.predicted_score_a}–{saved.predicted_score_b} after ET · {getResultLabel(saved.predicted_result, match.team_a, match.team_b)} on penalties</strong></>
+            : <>Your pick: <strong style={{ color: 'var(--white)' }}>{getResultLabel(saved.predicted_result, match.team_a, match.team_b)} — {saved.predicted_score_a}–{saved.predicted_score_b}</strong></>
+          }
         </div>
       )}
       {predLocked && !completed && !saved && (
@@ -160,11 +228,13 @@ export default function Predict() {
   const [savedPredictions, setSavedPredictions] = useState({})
   const [saving, setSaving] = useState({})
   const [editing, setEditing] = useState({})
-  const [tab, setTab] = useState('today')
+  const [tab, setTab] = useState('upcoming')
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
   const [selectedUpcomingDate, setSelectedUpcomingDate] = useState(null)
   const [now, setNow] = useState(new Date())
+  const [penaltyWinners, setPenaltyWinners] = useState({})
+  const [consensus, setConsensus] = useState({})
   const upcomingDateRef = useRef(null)
   const upcomingScrollRef = useDragScroll()
   const userRef = useRef(null)
@@ -242,40 +312,64 @@ export default function Predict() {
     setUser(session.user)
     userRef.current = session.user
 
-    const [profileRes, matchesRes, predsRes] = await Promise.all([
+    const [profileRes, matchesRes, predsRes, allPredsRes] = await Promise.all([
       supabase.from('profiles').select('*').eq('id', session.user.id).single(),
       supabase.from('matches').select('*').order('match_date').order('match_time'),
       supabase.from('predictions').select('*').eq('user_id', session.user.id),
+      supabase.from('predictions').select('match_id, predicted_result'),
     ])
 
     setProfile(profileRes.data)
-    setMatches(matchesRes.data || [])
+    if (!profileRes.data) {
+      // Profile doesn't exist — create one
+      await supabase.from('profiles').upsert({ id: session.user.id, username: session.user.email?.split('@')[0] || 'user' })
+      const { data: newProfile } = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
+      setProfile(newProfile)
+    }
+    const allMatches = matchesRes.data || []
+    setMatches(allMatches)
     const predsMap = {}
     ;(predsRes.data || []).forEach(p => { predsMap[p.match_id] = p })
+
+    // Build consensus map: matchId → { total, pctA, pctB, pctDraw }
+    const consensusRaw = {}
+    ;(allPredsRes.data || []).forEach(p => {
+      if (!consensusRaw[p.match_id]) consensusRaw[p.match_id] = { teamA: 0, teamB: 0, draw: 0 }
+      if (p.predicted_result === 'teamA') consensusRaw[p.match_id].teamA++
+      else if (p.predicted_result === 'teamB') consensusRaw[p.match_id].teamB++
+      else if (p.predicted_result === 'draw') consensusRaw[p.match_id].draw++
+    })
+    const consensusMap = {}
+    Object.entries(consensusRaw).forEach(([mid, c]) => {
+      const total = c.teamA + c.teamB + c.draw
+      consensusMap[mid] = {
+        total,
+        pctA: total ? Math.round((c.teamA / total) * 100) : 0,
+        pctB: total ? Math.round((c.teamB / total) * 100) : 0,
+        pctDraw: total ? Math.round((c.draw / total) * 100) : 0,
+      }
+    })
+    setConsensus(consensusMap)
     setSavedPredictions(predsMap)
+    setTab('upcoming')
     setLoading(false)
     if (router.query.welcome) setMessage("🎉 Welcome! Now predict today's matches!")
   }
 
-  // A match is in "past days" if its date is strictly before today
-  function isPastDay(match) {
-    return isBefore(startOfDay(parseISO(match.match_date)), startOfDay(new Date()))
-  }
-  function isMatchToday(match) { return isToday(parseISO(match.match_date)) }
-
-  // Tabs:
-  // Today: matches today
-  // Upcoming: future dates (not today)
+  // Tabs (IST-based):
+  // Today: matches whose IST date is today
+  // Upcoming: future IST dates (not today)
   // Completed: matches with result entered
-  const todayMatches = matches.filter(m => isMatchToday(m))
-  const upcomingMatches = matches.filter(m => !isMatchToday(m) && !isPastDay(m))
-  // Completed = has a result
+  const todayMatches = matches.filter(m => isISTToday(m) || isMatchLive(m))
+  const upcomingMatches = matches.filter(m => !isISTToday(m) && !isISTPastDay(m) && !isMatchLive(m))
   const completedMatches = matches.filter(m => isMatchCompleted(m))
 
+  // Group upcoming by IST date for the date-chip strip
   const upcomingByDate = {}
   upcomingMatches.forEach(m => {
-    if (!upcomingByDate[m.match_date]) upcomingByDate[m.match_date] = []
-    upcomingByDate[m.match_date].push(m)
+    const istDate = getISTDate(m.kickoff_utc)
+    if (!upcomingByDate[istDate]) upcomingByDate[istDate] = []
+    upcomingByDate[istDate].push(m)
   })
   const upcomingDates = Object.keys(upcomingByDate).sort()
 
@@ -290,16 +384,32 @@ export default function Predict() {
 
   function handleResultChange(matchId, value) {
     setPredictions(prev => ({ ...prev, [matchId]: { result: value, scoreA: '', scoreB: '' } }))
+    if (value !== 'draw_et') setPenaltyWinners(prev => { const next = { ...prev }; delete next[matchId]; return next })
   }
   function handleScorelineChange(matchId, scoreline) {
     const [a, b] = scoreline.split('-').map(Number)
     setPredictions(prev => ({ ...prev, [matchId]: { ...prev[matchId], scoreA: a, scoreB: b } }))
   }
+  function handlePenaltyWinnerChange(matchId, value) {
+    setPenaltyWinners(prev => ({ ...prev, [matchId]: value }))
+  }
 
   function handleEdit(matchId, saved) {
     setEditing(prev => ({ ...prev, [matchId]: true }))
     if (saved && !predictions[matchId]) {
-      setPredictions(prev => ({ ...prev, [matchId]: { result: saved.predicted_result, scoreA: saved.predicted_score_a, scoreB: saved.predicted_score_b } }))
+      const isKnockout = matches.find(m => m.id === matchId)?.stage !== 'Group Stage'
+      const isDrawET = isKnockout && saved.predicted_score_a === saved.predicted_score_b
+      setPredictions(prev => ({
+        ...prev,
+        [matchId]: {
+          result: isDrawET ? 'draw_et' : saved.predicted_result,
+          scoreA: saved.predicted_score_a,
+          scoreB: saved.predicted_score_b,
+        }
+      }))
+      if (isDrawET) {
+        setPenaltyWinners(prev => ({ ...prev, [matchId]: saved.predicted_result }))
+      }
     }
   }
 
@@ -310,10 +420,19 @@ export default function Predict() {
       alert('Please select both a result and scoreline.')
       return
     }
+    // For draw_et: require penalty winner selection
+    if (pred.result === 'draw_et' && !penaltyWinners[match.id]) {
+      alert('Please select the penalty shootout winner.')
+      return
+    }
+    // Map draw_et to the actual predicted_result (penalty winner)
+    const predictedResult = pred.result === 'draw_et' ? penaltyWinners[match.id] : pred.result
+    // Capture scroll position before any state updates
+    const scrollY = window.scrollY
     setSaving(s => ({ ...s, [match.id]: true }))
     const { error } = await supabase.from('predictions').upsert({
       user_id: user.id, match_id: match.id,
-      predicted_result: pred.result,
+      predicted_result: predictedResult,
       predicted_score_a: pred.scoreA,
       predicted_score_b: pred.scoreB,
     }, { onConflict: 'user_id,match_id' })
@@ -321,7 +440,7 @@ export default function Predict() {
       // If the match is already completed, score the prediction immediately
       let scored = { is_result_correct: null, is_score_correct: null, points_earned: null }
       if (match.result) {
-        const rc = pred.result === match.result
+        const rc = predictedResult === match.result
         const sc = rc && pred.scoreA === match.score_a && pred.scoreB === match.score_b
         scored = {
           is_result_correct: rc,
@@ -333,10 +452,13 @@ export default function Predict() {
       }
       setSavedPredictions(prev => ({
         ...prev,
-        [match.id]: { predicted_result: pred.result, predicted_score_a: pred.scoreA, predicted_score_b: pred.scoreB, ...scored }
+        [match.id]: { predicted_result: predictedResult, predicted_score_a: pred.scoreA, predicted_score_b: pred.scoreB, ...scored }
       }))
       setEditing(prev => ({ ...prev, [match.id]: false }))
       setPredictions(prev => { const next = { ...prev }; delete next[match.id]; return next })
+      setPenaltyWinners(prev => { const next = { ...prev }; delete next[match.id]; return next })
+      // Restore scroll position after React re-renders
+      requestAnimationFrame(() => { window.scrollTo({ top: scrollY, behavior: 'instant' }) })
     }
     setSaving(s => ({ ...s, [match.id]: false }))
   }
@@ -353,6 +475,10 @@ export default function Predict() {
   }
 
   const isGbLocked = new Date() >= TOURNAMENT_START
+
+  const totalPredictable = matches.filter(m => !isMatchCompleted(m) || savedPredictions[m.id]).length
+  const totalPredicted = Object.keys(savedPredictions).length
+  const progressPct = matches.length > 0 ? Math.round((totalPredicted / matches.length) * 100) : 0
 
   if (loading) return (
     <><Navbar user={user} /><div style={{ textAlign: 'center', paddingTop: '5rem', color: 'var(--gray-500)' }}>Loading matches...</div></>
@@ -372,7 +498,7 @@ export default function Predict() {
           </div>
         )}
 
-        <div style={{ fontWeight: 700, color: 'var(--gold)', marginBottom: '1.25rem', maxWidth: '700px', margin: '0 auto 1.25rem' }}>👋 {profile.username}</div>
+        {profile && <div style={{ fontWeight: 700, color: 'var(--gold)', marginBottom: '1.25rem', maxWidth: '700px', margin: '0 auto 1.25rem' }}>👋 {profile.username}</div>}
         {profile && (
           <div className="card-gold" style={{ maxWidth: '700px', margin: '0 auto 1.5rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.75rem' }}>
@@ -391,13 +517,34 @@ export default function Predict() {
               isGbLocked
                 ? <span className="lock-chip">🔒 Locked</span>
                 : <div style={{ fontSize: '0.75rem', color: '#f6ad55', background: 'rgba(246,173,85,0.12)', padding: '2px 8px', borderRadius: '99px', display: 'inline-block' }}>
-                    ⚠️ Freezes Jun 10, 11:30 PM IST — 1hr before tournament
+                    ⚠️ Freezes Jun 11, 11:30 PM IST — 1hr before tournament
                   </div>
             )}
           </div>
         )}
 
-        <h1 className="section-title" style={{ maxWidth: '700px', margin: '0 auto 1rem' }}>MATCH PREDICTIONS</h1>
+        <div style={{ maxWidth: '700px', margin: '0 auto 1.25rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
+            <h1 className="section-title" style={{ margin: 0 }}>MATCH PREDICTIONS</h1>
+            <span style={{ fontSize: '0.78rem', color: 'var(--gray-500)', fontWeight: 600 }}>
+              {totalPredicted} <span style={{ color: 'var(--gray-700)' }}>/</span> {matches.length} predicted
+            </span>
+          </div>
+          <div style={{ height: '4px', background: 'rgba(255,255,255,0.08)', borderRadius: '99px', overflow: 'hidden' }}>
+            <div style={{ height: '100%', width: `${progressPct}%`, background: 'linear-gradient(90deg, var(--success), var(--gold))', borderRadius: '99px', transition: 'width 0.4s ease' }} />
+          </div>
+        </div>
+
+        {/* Empty state — no predictions at all yet */}
+        {Object.keys(savedPredictions).length === 0 && matches.filter(m => !isMatchCompleted(m)).length > 0 && (
+          <div style={{ maxWidth: '700px', margin: '0 auto 1.25rem', padding: '0.85rem 1.1rem', background: 'rgba(245,200,66,0.06)', border: '1px solid rgba(245,200,66,0.2)', borderRadius: 'var(--radius)', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <span style={{ fontSize: '1.4rem' }}>🎯</span>
+            <div>
+              <div style={{ fontWeight: 600, color: 'var(--gold)', fontSize: '0.9rem' }}>No predictions yet!</div>
+              <div style={{ color: 'var(--gray-500)', fontSize: '0.8rem', marginTop: '2px' }}>Pick your results below — predictions lock 1 hour before each match.</div>
+            </div>
+          </div>
+        )}
 
         <div className="tabs" style={{ maxWidth: '700px', margin: '0 auto 1.5rem' }}>
           <button className={`tab-btn ${tab === 'upcoming' ? 'active' : ''}`} onClick={() => { const y = window.scrollY; setTab('upcoming'); requestAnimationFrame(() => window.scrollTo(0, y)) }}>
@@ -414,7 +561,11 @@ export default function Predict() {
         {/* TODAY */}
         {tab === 'today' && (
           todayMatches.length === 0
-            ? <div className="card" style={{ maxWidth: '700px', margin: '0 auto', textAlign: 'center', padding: '3rem', color: 'var(--gray-500)' }}>No matches today. Check upcoming!</div>
+            ? <div className="card" style={{ maxWidth: '700px', margin: '0 auto', textAlign: 'center', padding: '3rem' }}>
+                <div style={{ fontSize: '2rem', marginBottom: '0.75rem' }}>📅</div>
+                <div style={{ color: 'var(--gray-300)', fontWeight: 600, marginBottom: '0.4rem' }}>No matches today</div>
+                <div style={{ color: 'var(--gray-500)', fontSize: '0.85rem' }}>Check the Upcoming tab to predict future matches.</div>
+              </div>
             : <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxWidth: '700px', margin: '0 auto' }}>
                 {todayMatches.map(m => (
                   <MatchCard
@@ -427,6 +578,9 @@ export default function Predict() {
                     onScorelineChange={handleScorelineChange}
                     onSave={() => savePrediction(m)}
                     onEdit={handleEdit}
+                    penaltyWinner={penaltyWinners[m.id]}
+                    onPenaltyWinnerChange={handlePenaltyWinnerChange}
+                    consensus={consensus[m.id]}
                   />
                 ))}
               </div>
@@ -490,6 +644,8 @@ export default function Predict() {
                         onScorelineChange={handleScorelineChange}
                         onSave={() => savePrediction(m)}
                         onEdit={handleEdit}
+                        penaltyWinner={penaltyWinners[m.id]}
+                        onPenaltyWinnerChange={handlePenaltyWinnerChange}
                       />
                     ))}
                   </div>
@@ -513,6 +669,9 @@ export default function Predict() {
                     onScorelineChange={handleScorelineChange}
                     onSave={() => savePrediction(m)}
                     onEdit={handleEdit}
+                    penaltyWinner={penaltyWinners[m.id]}
+                    onPenaltyWinnerChange={handlePenaltyWinnerChange}
+                    consensus={consensus[m.id]}
                   />
                 ))}
               </div>

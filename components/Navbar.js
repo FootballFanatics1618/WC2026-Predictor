@@ -58,8 +58,11 @@ export default function Navbar({ user }) {
           {user ? (
             <>
               <Link href="/predict" className={navClass('/predict')}>Predict</Link>
-              <Link href="/others" className={navClass('/others')}>Others</Link>
               <Link href="/leaderboard" className={navClass('/leaderboard')}>Leaderboard</Link>
+              <a href="https://footballfanatics1618.github.io/WC2026-Predictor/" target="_blank" rel="noopener noreferrer" className="nav-btn nav-btn-ghost" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                Insights
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+              </a>
               {isAdmin && <Link href="/admin" className={navClass('/admin')}>Admin</Link>}
               <button onClick={() => setShowSignOutModal(true)} className="nav-btn nav-btn-ghost nav-btn-icon" aria-label="Sign out">
                 <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>

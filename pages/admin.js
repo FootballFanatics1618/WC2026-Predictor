@@ -6,8 +6,8 @@ import FlagImg from '../components/FlagImg'
 import { supabase } from '../lib/supabase'
 import { ALL_PLAYERS } from '../lib/data'
 import { useDragScroll } from '../hooks/useDragScroll'
-import { toIST } from '../lib/flags'
-import { format, parseISO, formatDistanceToNow, isToday } from 'date-fns'
+import { toIST, getISTDate, matchISTDate, todayIST } from '../lib/flags'
+import { format, parseISO, formatDistanceToNow } from 'date-fns'
 
 const ADMIN_EMAILS = process.env.NEXT_PUBLIC_ADMIN_EMAILS
   ? process.env.NEXT_PUBLIC_ADMIN_EMAILS.split(',').map(e => e.trim())
@@ -28,6 +28,15 @@ const GROUP_TEAMS = {
   J:["Argentina","Algeria","Austria","Jordan"],
   K:["Portugal","DR Congo","Uzbekistan","Colombia"],
   L:["England","Croatia","Ghana","Panama"],
+}
+
+function isPenaltyResult(result) {
+  return result === 'teamA_pen' || result === 'teamB_pen'
+}
+function baseResult(result) {
+  if (result === 'teamA_pen') return 'teamA'
+  if (result === 'teamB_pen') return 'teamB'
+  return result
 }
 
 function sortStandings(rows) {
@@ -61,7 +70,12 @@ export default function Admin() {
   const [loading, setLoading]       = useState(true)
   const [showStandings, setShowStandings] = useState(false)
   const [showCompleted, setShowCompleted] = useState(false)
-  const [activeTab, setActiveTab]   = useState('results') // 'results' | 'sync' | 'gb'
+  const [activeTab, setActiveTab]   = useState('results') // 'results' | 'sync' | 'gb' | 'others'
+  // Others' predictions state
+  const [othersProfiles, setOthersProfiles] = useState([])
+  const [allPredictions, setAllPredictions] = useState([])
+  const [othersSelectedDate, setOthersSelectedDate] = useState(null)
+  const [othersSelectedMatch, setOthersSelectedMatch] = useState(null)
   // Sync state
   const [syncing, setSyncing]       = useState(false)
   const [syncLog, setSyncLog]       = useState([])
@@ -94,7 +108,7 @@ export default function Admin() {
     setUser(session.user)
     if (!ADMIN_EMAILS.includes(session.user.email)) { setLoading(false); return }
     setIsAdmin(true)
-    await Promise.all([loadMatches(), loadStandings(), loadSyncLog(), loadGbStatus()])
+    await Promise.all([loadMatches(), loadStandings(), loadSyncLog(), loadGbStatus(), loadOthersData()])
     setLoading(false)
   }
 
@@ -115,6 +129,15 @@ export default function Admin() {
   async function loadStandings() {
     const { data } = await supabase.from('group_standings').select('*').order('group_name').order('points', { ascending: false })
     setStandings(data || [])
+  }
+
+  async function loadOthersData() {
+    const [profilesRes, predsRes] = await Promise.all([
+      supabase.from('profiles').select('id, username, first_name, last_name, golden_boot_pick'),
+      supabase.from('predictions').select('*'),
+    ])
+    setOthersProfiles(profilesRes.data || [])
+    setAllPredictions(predsRes.data || [])
   }
 
   const loadSyncLog = useCallback(async () => {
@@ -180,15 +203,19 @@ export default function Admin() {
     const scoreA = parseInt(form.scoreA)
     const scoreB = parseInt(form.scoreB)
     const diff = scoreA - scoreB
+    const result = baseResult(form.result)
+    const wonOnPenalties = isPenaltyResult(form.result)
 
-    // Score-vs-result consistency check
-    if (form.result === 'teamA' && diff <= 0) { alert("Score doesn't match Team A win"); setSaving(s=>({...s,[match.id]:false})); return }
-    if (form.result === 'teamB' && diff >= 0) { alert("Score doesn't match Team B win"); setSaving(s=>({...s,[match.id]:false})); return }
-    if (form.result === 'draw' && diff !== 0) { alert("Score doesn't match Draw"); setSaving(s=>({...s,[match.id]:false})); return }
+    // Score-vs-result consistency check (skip for penalties — score is level after ET)
+    if (!wonOnPenalties) {
+      if (result === 'teamA' && diff <= 0) { alert("Score doesn't match Team A win"); setSaving(s=>({...s,[match.id]:false})); return }
+      if (result === 'teamB' && diff >= 0) { alert("Score doesn't match Team B win"); setSaving(s=>({...s,[match.id]:false})); return }
+      if (result === 'draw' && diff !== 0) { alert("Score doesn't match Draw"); setSaving(s=>({...s,[match.id]:false})); return }
+    }
 
     // ── 1. Save result to match row ──────────────────────────────────────────
     const { error: mErr } = await supabase.from('matches').update({
-      result: form.result, score_a: scoreA, score_b: scoreB,
+      result, score_a: scoreA, score_b: scoreB, won_on_penalties: wonOnPenalties,
     }).eq('id', match.id)
     if (mErr) {
       alert(`❌ Could not save result.\n\n${mErr.message}\n\nCheck that admin-rls-fix.sql has been run in Supabase.`)
@@ -200,7 +227,7 @@ export default function Admin() {
     const { data: preds } = await supabase.from('predictions').select('*').eq('match_id', match.id)
     let scoredCount = 0
     for (const pred of (preds || [])) {
-      const rc = pred.predicted_result === form.result
+      const rc = pred.predicted_result === result
       const sc = rc && pred.predicted_score_a === scoreA && pred.predicted_score_b === scoreB
       const { error: uErr } = await supabase.from('predictions').update({
         is_result_correct: rc, is_score_correct: sc, points_earned: sc ? 5 : rc ? 3 : 0,
@@ -211,21 +238,20 @@ export default function Admin() {
     // ── 3. Update group standings ──────────────────────────────────────────────
     if (match.stage === 'Group Stage' && match.group_name) {
       if (isEdit && match.result !== null) {
-        // Reverse the old result first, then apply the new one
         const sErr = await updateGroupStandings(
-          match, form.result, scoreA, scoreB,
+          match, result, scoreA, scoreB,
           match.result, match.score_a, match.score_b   // old values to reverse
         )
         if (sErr) console.error('Standings edit failed:', sErr)
       } else {
-        const sErr = await updateGroupStandings(match, form.result, scoreA, scoreB)
+        const sErr = await updateGroupStandings(match, result, scoreA, scoreB)
         if (sErr) console.error('Standings update failed:', sErr)
       }
     }
 
     // ── 4. Knockout progression (only for new saves, not edits) ────────────────
     if (!isEdit && match.stage !== 'Group Stage') {
-      await resolveKnockoutProgression(match, form.result)
+      await resolveKnockoutProgression(match, result)
     }
 
     // ── 5. After all 72 group games, propagate winners to R32 ───────────────
@@ -235,7 +261,7 @@ export default function Admin() {
       if (groupDone === 72) await propagateAllGroupWinners(freshMatches || [])
     }
 
-    setMessage(`✅ ${match.team_a} ${scoreA}–${scoreB} ${match.team_b} ${isEdit ? 'updated' : 'saved'}! ${scoredCount}/${preds?.length || 0} predictions scored.`)
+    setMessage(`✅ ${match.team_a} ${scoreA}–${scoreB} ${match.team_b}${wonOnPenalties ? ' (penalties)' : ''} ${isEdit ? 'updated' : 'saved'}! ${scoredCount}/${preds?.length || 0} predictions scored.`)
     await Promise.all([loadMatches(), loadStandings()])
     setSaving(s => ({ ...s, [match.id]: false }))
     setShowCompleted(true)
@@ -247,7 +273,7 @@ export default function Admin() {
 
     // 1. Clear match result
     const { error: mErr } = await supabase.from('matches').update({
-      result: null, score_a: null, score_b: null,
+      result: null, score_a: null, score_b: null, won_on_penalties: false,
     }).eq('id', match.id)
     if (mErr) {
       alert(`❌ Could not reset result.\n\n${mErr.message}`)
@@ -440,20 +466,29 @@ export default function Admin() {
     }
   }
 
+  // Resolve a group-stage placeholder like "Winner A", "Runner-up B",
+  // "Best 3rd (A/B/C/D/F)" to an actual team name.
+  // best3rds is a ranked array of { team, group, points, gd, gf } (best first).
+  // We consume entries from it as we assign slots — pass a copy per call or
+  // manage the array externally.
   function resolveGroupSlot(placeholder, slotMap, best3rds) {
     if (!placeholder) return null
+    // Direct slot lookup: "Winner A", "Runner-up B"
     if (slotMap[placeholder]) return slotMap[placeholder]
+    // Best 3rd: "Best 3rd (A/B/C/D/F)" — pick the highest-ranked 3rd-place team
+    // whose group is in the allowed list.
     if (placeholder.startsWith('Best 3rd')) {
-      const match = placeholder.match(/\(([^)]+)\)/)
-      if (match) {
-        const allowed = match[1].split('/').map(s => s.trim())
-        const pick = best3rds.find(t => allowed.includes(t.group))
-        if (pick) {
-          best3rds.splice(best3rds.indexOf(pick), 1)
+      const m = placeholder.match(/\(([^)]+)\)/)
+      if (m) {
+        const allowed = m[1].split('/').map(s => s.trim())
+        const idx = best3rds.findIndex(t => allowed.includes(t.group))
+        if (idx !== -1) {
+          const [pick] = best3rds.splice(idx, 1)
           return pick.team
         }
       }
-      if (best3rds.length > 0) { const p = best3rds.shift(); return p.team }
+      // Fallback: take the best available 3rd regardless of group
+      if (best3rds.length > 0) return best3rds.shift().team
     }
     return null
   }
@@ -484,19 +519,20 @@ export default function Admin() {
   if (!isAdmin) return <><Navbar user={user}/><div className="page" style={{textAlign:'center',paddingTop:'5rem',color:'var(--gray-500)'}}>⛔ No admin access.</div></>
 
   // ── Derived data ──────────────────────────────────────────────────────────
+  // All dates and grouping are in IST (India Standard Time, UTC+5:30).
+  // match_date in the DB is the ET date; matchISTDate() converts to IST calendar date.
+
   const stageMatches = matches.filter(m => m.stage === activeStage)
   const totalDone = matches.filter(m => m.result !== null).length
 
-  // Build a sorted list of unique dates within the current stage
-  const stageDates = [...new Set(stageMatches.map(m => m.match_date))].sort()
+  const stageDates = [...new Set(stageMatches.map(m => getISTDate(m.kickoff_utc)))].sort()
 
-  // Auto-select the first date in this stage when the stage changes
+  // Auto-select the first IST date in this stage when the stage changes
   const activeDayDate = selectedDay && stageDates.includes(selectedDay)
     ? selectedDay
     : stageDates[0] || null
 
-  // Matches on the selected day
-  const dayMatches = stageMatches.filter(m => m.match_date === activeDayDate)
+  const dayMatches = stageMatches.filter(m => getISTDate(m.kickoff_utc) === activeDayDate)
   const pendingOnDay = dayMatches.filter(m => m.result === null)
   const completedOnDay = dayMatches.filter(m => m.result !== null)
 
@@ -510,9 +546,10 @@ export default function Admin() {
     standingsByGroup[g] = sortStandings(standings.filter(s => s.group_name === g))
   })
 
-  function dayLabel(dateStr) {
-    const d = parseISO(dateStr)
-    const todayFlag = isToday(d)
+  function dayLabel(istDateStr) {
+    // istDateStr is already an IST calendar date ("YYYY-MM-DD")
+    const todayFlag = istDateStr === todayIST()
+    const d = parseISO(istDateStr)
     return (todayFlag ? '📅 Today · ' : '') + format(d, 'EEE, MMM d')
   }
 
@@ -543,6 +580,9 @@ export default function Admin() {
           <button className={`tab-btn ${activeTab==='gb'?'active':''}`} onClick={() => { preserveScroll(); setActiveTab('gb') }}>
             Golden Boot
           </button>
+          <button className={`tab-btn ${activeTab==='others'?'active':''}`} onClick={() => { setActiveTab('others'); loadOthersData(); setOthersSelectedDate(null); setOthersSelectedMatch(null) }}>
+            Others' Picks
+          </button>
         </div>
 
         {/* ── SYNC TAB ──────────────────────────────────────────────────── */}
@@ -553,19 +593,17 @@ export default function Admin() {
                 🔄 SCORE SYNC
               </h2>
               <p style={{fontSize:'0.85rem',color:'var(--gray-400)',marginBottom:'1rem',lineHeight:'1.6'}}>
-                The sync function runs automatically via pg_cron at 8 scheduled times per day —
-                timed to fire ~30 min after each match window ends. No constant polling.
-                Use <strong style={{color:'var(--white)'}}>Sync Now</strong> to trigger manually if a result seems delayed.
+                The sync function runs automatically via pg_cron <strong style={{color:'var(--white)'}}>every 5 minutes</strong> during
+                all possible match hours (16:00–07:00 UTC). Results appear in the app within ~5 minutes of full time.
+                Use <strong style={{color:'var(--white)'}}>Sync Now</strong> to trigger immediately if a result seems delayed.
               </p>
 
               {/* Schedule display */}
               <div style={{background:'rgba(0,0,0,0.2)',borderRadius:'var(--radius)',padding:'0.875rem 1rem',marginBottom:'1.25rem',fontSize:'0.8rem',color:'var(--gray-400)',lineHeight:'1.8'}}>
-                <div style={{color:'var(--gold)',fontWeight:700,marginBottom:'0.4rem',fontSize:'0.75rem',letterSpacing:'0.06em'}}>CRON SCHEDULE (UTC)</div>
-                <div>18:30 · 18:50 — after 12:00 ET kick-offs</div>
-                <div>21:30 · 21:50 — after 15:00 ET kick-offs</div>
-                <div>00:30 · 00:50 — after 18:00 ET kick-offs</div>
-                <div>03:30 · 03:50 — after 21:00 ET kick-offs</div>
-                <div style={{marginTop:'0.4rem',color:'var(--gray-500)'}}>+ safety catchall every 3 hours</div>
+                <div style={{color:'var(--gold)',fontWeight:700,marginBottom:'0.4rem',fontSize:'0.75rem',letterSpacing:'0.06em'}}>CRON SCHEDULE</div>
+                <div style={{fontFamily:'monospace',color:'var(--white)',marginBottom:'0.4rem'}}>*/5 16-23,0-7 * * *</div>
+                <div>Fires every 5 min · 16:00–07:00 UTC (21:30 IST – 12:30 IST next day)</div>
+                <div style={{marginTop:'0.4rem',color:'var(--gray-500)'}}>Covers all ET kick-off slots (12:00 ET – 02:00 ET) with ~4 hrs buffer</div>
               </div>
 
               <div style={{display:'flex',gap:'0.75rem',alignItems:'center',flexWrap:'wrap'}}>
@@ -587,7 +625,7 @@ export default function Admin() {
                 </button>
                 {lastSync && (
                   <span style={{fontSize:'0.8rem',color:'var(--gray-500)'}}>
-                    Last run: {format(new Date(lastSync.ran_at), 'MMM d, HH:mm')} UTC
+                    Last run: {format(new Date(new Date(lastSync.ran_at).getTime() + 5.5*3600000), 'MMM d, HH:mm')} IST
                     · source: <strong style={{color:'var(--gray-300)'}}>{lastSync.source}</strong>
                   </span>
                 )}
@@ -611,7 +649,7 @@ export default function Admin() {
                 {syncLog.map(row => (
                   <div key={row.id} className="card" style={{padding:'0.6rem 1rem',display:'grid',gridTemplateColumns:'1fr 60px 60px 60px 80px',gap:'0.5rem',alignItems:'center'}}>
                     <span style={{fontSize:'0.82rem',color:'var(--gray-300)'}}>
-                      {format(new Date(row.ran_at), 'MMM d, HH:mm')}
+                      {format(new Date(new Date(row.ran_at).getTime() + 5.5*3600000), 'MMM d, HH:mm')} IST
                       <span style={{color:'var(--gray-500)',fontSize:'0.75rem'}}> · {formatDistanceToNow(new Date(row.ran_at), { addSuffix: true })}</span>
                     </span>
                     <span style={{fontSize:'0.82rem',textAlign:'center',color:'var(--gray-400)'}}>{row.matches_checked}</span>
@@ -747,21 +785,22 @@ export default function Admin() {
             {stageDates.length > 0 && (
               <div style={{marginBottom:'1.5rem'}}>
                 <div ref={dayScrollRef} className="scroll-row">
-                  {stageDates.map(dateStr => {
-                    const pendingCount = stageMatches.filter(m => m.match_date===dateStr && m.result===null).length
+                  {stageDates.map(istDateStr => {
+                    const pendingCount = stageMatches.filter(m => getISTDate(m.kickoff_utc)===istDateStr && m.result===null).length
                     const allDone = pendingCount === 0
-                    const isActive = activeDayDate === dateStr
+                    const isActive = activeDayDate === istDateStr
+                    const isToday = istDateStr === todayIST()
                     return (
                       <button
-                        key={dateStr}
+                        key={istDateStr}
                         ref={isActive ? dayPillRef : null}
-                        onClick={()=>{ preserveScroll(); setSelectedDay(dateStr); setShowCompleted(false) }}
+                        onClick={()=>{ preserveScroll(); setSelectedDay(istDateStr); setShowCompleted(false) }}
                         style={{
                           padding:'0.4rem 0.85rem',
                           borderRadius:'99px',
                           border: isActive ? '1.5px solid var(--gold)' : '1px solid rgba(255,255,255,0.12)',
                           background: isActive ? 'rgba(245,200,66,0.12)' : 'transparent',
-                          color: isActive ? 'var(--gold)' : 'var(--gray-300)',
+                          color: isActive ? 'var(--gold)' : isToday ? '#f6ad55' : 'var(--gray-300)',
                           fontSize:'0.82rem',
                           fontWeight: isActive ? 700 : 400,
                           cursor:'pointer',
@@ -771,7 +810,7 @@ export default function Admin() {
                           gap:'5px',
                         }}
                       >
-                        {format(parseISO(dateStr),'EEE, MMM d')}
+                        {isToday ? '📅 ' : ''}{format(parseISO(istDateStr),'EEE, MMM d')}
                         {allDone
                           ? <span style={{fontSize:'0.85rem',color:'var(--success)'}}>✅</span>
                           : <span style={{fontSize:'0.7rem',borderRadius:'99px',padding:'1px 6px',background:'rgba(255,255,255,0.08)',color:'var(--gray-500)'}}>{pendingCount}</span>
@@ -823,7 +862,7 @@ export default function Admin() {
                           <span style={{display:'inline-flex',alignItems:'center',gap:'6px'}}><FlagImg team={match.team_b} size={20} />{match.team_b}</span>
                         </div>
                         <div style={{fontSize:'0.75rem',color:'var(--gray-500)'}}>
-                          {toIST(match.match_time)}
+                          {toIST(match.match_time, match.kickoff_utc)}
                           {match.group_name ? ` · Group ${match.group_name}` : ''}
                           {isKnockout && !bothKnown && (
                             <span style={{color:'var(--gold)',marginLeft:'0.5rem'}}>⏳ Awaiting group results</span>
@@ -849,6 +888,8 @@ export default function Admin() {
                           <option value="teamA">{match.team_a} Win</option>
                           {match.stage === 'Group Stage' && <option value="draw">Draw</option>}
                           <option value="teamB">{match.team_b} Win</option>
+                          {match.stage !== 'Group Stage' && <option value="teamA_pen">{match.team_a} Win (penalties)</option>}
+                          {match.stage !== 'Group Stage' && <option value="teamB_pen">{match.team_b} Win (penalties)</option>}
                         </select>
 
                         <div style={{display:'flex',alignItems:'center',gap:'0.4rem'}}>
@@ -929,10 +970,11 @@ export default function Admin() {
                               <span style={{display:'inline-flex',alignItems:'center',gap:'4px',fontSize:'0.88rem',fontWeight:500}}><FlagImg team={m.team_a} size={18} />{m.team_a}</span>
                               <span style={{color:'var(--gray-500)',fontSize:'0.8rem'}}>vs</span>
                               <span style={{display:'inline-flex',alignItems:'center',gap:'4px',fontSize:'0.88rem',fontWeight:500}}><FlagImg team={m.team_b} size={18} />{m.team_b}</span>
-                              <span style={{fontSize:'0.73rem',color:'var(--gray-500)',marginLeft:'0.5rem'}}>{toIST(m.match_time)}</span>
+                              <span style={{fontSize:'0.73rem',color:'var(--gray-500)',marginLeft:'0.5rem'}}>{toIST(m.match_time, m.kickoff_utc)}</span>
                             </div>
                             <div style={{display:'flex',alignItems:'center',gap:'0.5rem'}}>
                               <span className="match-result-badge">{m.score_a}–{m.score_b}</span>
+                              {m.won_on_penalties && <span style={{fontSize:'0.72rem',color:'var(--gold)',fontWeight:600}}>Won on penalties</span>}
                               {!isEditing && (
                                 <>
                                   <button
@@ -942,7 +984,9 @@ export default function Admin() {
                                       setResultForm(prev => ({
                                         ...prev,
                                         [m.id]: {
-                                          result: m.result,
+                                          result: m.won_on_penalties
+                                            ? (m.result === 'teamA' ? 'teamA_pen' : 'teamB_pen')
+                                            : m.result,
                                           scoreA: String(m.score_a),
                                           scoreB: String(m.score_b),
                                         }
@@ -989,6 +1033,8 @@ export default function Admin() {
                                 <option value="teamA">{m.team_a} Win</option>
                                 {m.stage==='Group Stage' && <option value="draw">Draw</option>}
                                 <option value="teamB">{m.team_b} Win</option>
+                                {m.stage!=='Group Stage' && <option value="teamA_pen">{m.team_a} Win (penalties)</option>}
+                                {m.stage!=='Group Stage' && <option value="teamB_pen">{m.team_b} Win (penalties)</option>}
                               </select>
                               <div style={{display:'flex',alignItems:'center',gap:'0.4rem'}}>
                                 <input
@@ -1040,48 +1086,314 @@ export default function Admin() {
                   </button>
                 </div>
                 {showStandings && (
-                  <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(300px,1fr))',gap:'1rem',marginBottom:'2rem'}}>
-                    {groups.map(g => (
-                      <div key={g} className="card" style={{padding:'1rem'}}>
-                        <div style={{fontFamily:'var(--font-display)',fontSize:'1rem',color:'var(--gold)',marginBottom:'0.6rem',letterSpacing:'0.05em'}}>GROUP {g}</div>
-                        <table style={{width:'100%',fontSize:'0.78rem'}}>
-                          <thead>
-                            <tr>
-                              <th style={{textAlign:'left',paddingBottom:'4px',color:'var(--gray-500)',fontWeight:600}}>Team</th>
-                              <th style={{textAlign:'center',paddingBottom:'4px',color:'var(--gray-500)',fontWeight:600}}>P</th>
-                              <th style={{textAlign:'center',paddingBottom:'4px',color:'var(--gray-500)',fontWeight:600}}>W</th>
-                              <th style={{textAlign:'center',paddingBottom:'4px',color:'var(--gray-500)',fontWeight:600}}>D</th>
-                              <th style={{textAlign:'center',paddingBottom:'4px',color:'var(--gray-500)',fontWeight:600}}>L</th>
-                              <th style={{textAlign:'center',paddingBottom:'4px',color:'var(--gray-500)',fontWeight:600}}>GD</th>
-                              <th style={{textAlign:'center',paddingBottom:'4px',color:'var(--gold)',fontWeight:700}}>Pts</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {(standingsByGroup[g] || []).map((row, i) => (
-                              <tr key={row.team}>
-                                <td style={{color: i < 2 ? 'var(--white)' : i === 2 ? '#f6ad55' : 'var(--gray-500)', fontWeight: i < 2 ? 600 : 400, paddingTop:'3px'}}>
-                                  {i===0?'🥇':i===1?'🥈':i===2?'🟡':''} {row.team}
-                                </td>
-                                <td style={{textAlign:'center',color:'var(--gray-500)'}}>{row.played}</td>
-                                <td style={{textAlign:'center'}}>{row.won}</td>
-                                <td style={{textAlign:'center'}}>{row.drawn}</td>
-                                <td style={{textAlign:'center'}}>{row.lost}</td>
-                                <td style={{textAlign:'center',color: (row.goals_for-row.goals_against)>0?'#68d391':(row.goals_for-row.goals_against)<0?'#fc8181':'var(--gray-300)'}}>
-                                  {row.goals_for-row.goals_against>0?'+':''}{row.goals_for-row.goals_against}
-                                </td>
-                                <td style={{textAlign:'center',fontWeight:700,color:'var(--gold)'}}>{row.points}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    ))}
-                  </div>
+                  <>
+                    {/* Legend */}
+                    <div style={{display:'flex',gap:'1.25rem',marginBottom:'0.75rem',flexWrap:'wrap',fontSize:'0.72rem',color:'var(--gray-500)'}}>
+                      <span><span style={{color:'#68d391',fontWeight:700}}>█</span> Qualify (Top 2)</span>
+                      <span><span style={{color:'#f6ad55',fontWeight:700}}>█</span> Best 3rd (potential)</span>
+                      <span style={{color:'var(--gray-600)'}}>P=Played · W/D/L · GF/GA · GD · Pts</span>
+                    </div>
+                    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(340px,1fr))',gap:'1rem',marginBottom:'2rem'}}>
+                      {groups.map(g => {
+                        const rows = standingsByGroup[g] || []
+                        const gamesPlayed = rows.reduce((s,r)=>s+r.played,0) / 2
+                        const totalGames = 6 // 4 teams × 3 matchdays / 2
+                        return (
+                          <div key={g} className="card" style={{padding:'1rem 0.85rem'}}>
+                            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'0.6rem'}}>
+                              <div style={{fontFamily:'var(--font-display)',fontSize:'1rem',color:'var(--gold)',letterSpacing:'0.05em'}}>GROUP {g}</div>
+                              <div style={{fontSize:'0.7rem',color:'var(--gray-500)'}}>{gamesPlayed}/{totalGames} played</div>
+                            </div>
+                            <div style={{overflowX:'auto'}}>
+                              <table style={{width:'100%',fontSize:'0.75rem',borderCollapse:'collapse',minWidth:'300px'}}>
+                                <thead>
+                                  <tr style={{borderBottom:'1px solid rgba(255,255,255,0.06)'}}>
+                                    <th style={{textAlign:'left',paddingBottom:'5px',color:'var(--gray-500)',fontWeight:600,paddingRight:'4px'}}>#</th>
+                                    <th style={{textAlign:'left',paddingBottom:'5px',color:'var(--gray-500)',fontWeight:600,minWidth:'90px'}}>Team</th>
+                                    <th style={{textAlign:'center',paddingBottom:'5px',color:'var(--gray-500)',fontWeight:600,width:'22px'}}>P</th>
+                                    <th style={{textAlign:'center',paddingBottom:'5px',color:'var(--gray-500)',fontWeight:600,width:'22px'}}>W</th>
+                                    <th style={{textAlign:'center',paddingBottom:'5px',color:'var(--gray-500)',fontWeight:600,width:'22px'}}>D</th>
+                                    <th style={{textAlign:'center',paddingBottom:'5px',color:'var(--gray-500)',fontWeight:600,width:'22px'}}>L</th>
+                                    <th style={{textAlign:'center',paddingBottom:'5px',color:'var(--gray-500)',fontWeight:600,width:'26px'}}>GF</th>
+                                    <th style={{textAlign:'center',paddingBottom:'5px',color:'var(--gray-500)',fontWeight:600,width:'26px'}}>GA</th>
+                                    <th style={{textAlign:'center',paddingBottom:'5px',color:'var(--gray-500)',fontWeight:600,width:'30px'}}>GD</th>
+                                    <th style={{textAlign:'center',paddingBottom:'5px',color:'var(--gold)',fontWeight:700,width:'28px'}}>Pts</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {rows.map((row, i) => {
+                                    const gd = row.goals_for - row.goals_against
+                                    // Colour-code: green = qualified (top 2), amber = potential best 3rd, dim = eliminated
+                                    const qualBg = i < 2
+                                      ? 'rgba(104,211,145,0.08)'
+                                      : i === 2
+                                        ? 'rgba(246,173,85,0.06)'
+                                        : 'transparent'
+                                    const nameColor = i < 2 ? '#68d391' : i === 2 ? '#f6ad55' : 'var(--gray-500)'
+                                    const qualBadge = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🟡' : '❌'
+                                    return (
+                                      <tr key={row.team} style={{background:qualBg,borderBottom:'1px solid rgba(255,255,255,0.03)'}}>
+                                        <td style={{textAlign:'center',paddingTop:'4px',paddingBottom:'4px',color:'var(--gray-600)',fontSize:'0.8rem'}}>{qualBadge}</td>
+                                        <td style={{color:nameColor,fontWeight:i<2?600:400,paddingTop:'4px',paddingBottom:'4px',paddingRight:'4px'}}>
+                                          <span style={{display:'inline-flex',alignItems:'center',gap:'5px'}}>
+                                            <FlagImg team={row.team} size={13}/>{row.team}
+                                          </span>
+                                        </td>
+                                        <td style={{textAlign:'center',color:'var(--gray-500)'}}>{row.played}</td>
+                                        <td style={{textAlign:'center',color:'var(--white)',fontWeight:row.won>0?600:400}}>{row.won}</td>
+                                        <td style={{textAlign:'center',color:'var(--gray-400)'}}>{row.drawn}</td>
+                                        <td style={{textAlign:'center',color:row.lost>0?'#fc8181':'var(--gray-400)'}}>{row.lost}</td>
+                                        <td style={{textAlign:'center',color:'var(--gray-300)',fontWeight:500}}>{row.goals_for}</td>
+                                        <td style={{textAlign:'center',color:'var(--gray-400)'}}>{row.goals_against}</td>
+                                        <td style={{textAlign:'center',color:gd>0?'#68d391':gd<0?'#fc8181':'var(--gray-300)',fontWeight:gd!==0?600:400}}>
+                                          {gd>0?`+${gd}`:gd}
+                                        </td>
+                                        <td style={{textAlign:'center',fontWeight:700,color:'var(--gold)',fontSize:'0.82rem'}}>{row.points}</td>
+                                      </tr>
+                                    )
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </>
                 )}
               </>
             )}
           </>
         )}
+
+        {/* ── OTHERS' PICKS TAB ────────────────────────────────────────────── */}
+        {activeTab === 'others' && (() => {
+          // Group matches by their IST calendar date for display
+          const byDate = {}
+          matches.forEach(m => {
+            const istDate = matchISTDate(m.match_date, m.match_time)
+            if (!byDate[istDate]) byDate[istDate] = []
+            byDate[istDate].push(m)
+          })
+          const dates = Object.keys(byDate).sort()
+
+          function getOthersPred(userId, matchId) {
+            return allPredictions.find(p => p.user_id === userId && p.match_id === matchId)
+          }
+          function displayName(p) {
+            if (p.first_name && p.last_name) return `${p.first_name} ${p.last_name}`
+            return p.username || 'Unknown'
+          }
+          function getResultLabel(result, teamA, teamB) {
+            if (result === 'teamA') return `${teamA} Win`
+            if (result === 'teamB') return `${teamB} Win`
+            if (result === 'draw') return 'Draw'
+            return ''
+          }
+
+          // ── Match detail view
+          if (othersSelectedMatch) {
+            const match = othersSelectedMatch
+            const isCompleted = match.result !== null
+            const ordered = [...othersProfiles].sort((a, b) => displayName(a).localeCompare(displayName(b)))
+            return (
+              <div>
+                <div style={{display:'flex',alignItems:'center',gap:'0.5rem',marginBottom:'1.25rem',fontSize:'0.875rem',color:'var(--gray-500)'}}>
+                  <button onClick={() => { setOthersSelectedMatch(null) }} style={{background:'none',border:'none',color:'var(--gray-500)',cursor:'pointer',padding:0}}>Others' Picks</button>
+                  <span>›</span>
+                  <button onClick={() => { setOthersSelectedMatch(null) }} style={{background:'none',border:'none',color:'var(--gray-500)',cursor:'pointer',padding:0}}>
+                    {format(parseISO(matchISTDate(match.match_date, match.match_time)), 'EEE, MMM d')}
+                  </button>
+                  <span>›</span>
+                  <span style={{color:'var(--white)'}}>{match.team_a} vs {match.team_b}</span>
+                </div>
+
+                <div className="card" style={{padding:'1rem 1.25rem',marginBottom:'1.25rem'}}>
+                  <div style={{display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap',marginBottom:'0.4rem'}}>
+                    <span style={{display:'flex',alignItems:'center',gap:'6px',fontFamily:'var(--font-display)',fontSize:'1.3rem',color:'var(--white)'}}>
+                      <FlagImg team={match.team_a} size={24}/>{match.team_a}
+                    </span>
+                    <span style={{color:'var(--gray-500)',fontSize:'0.9rem'}}>vs</span>
+                    <span style={{display:'flex',alignItems:'center',gap:'6px',fontFamily:'var(--font-display)',fontSize:'1.3rem',color:'var(--white)'}}>
+                      <FlagImg team={match.team_b} size={24}/>{match.team_b}
+                    </span>
+                    {isCompleted && <span className="match-result-badge" style={{marginLeft:'0.5rem'}}>{match.score_a}–{match.score_b}</span>}
+                  </div>
+                  <div style={{fontSize:'0.78rem',color:'var(--gray-500)'}}>
+                    {toIST(match.match_time)}{match.group_name ? ` · Group ${match.group_name}` : ''} · {match.stage}
+                  </div>
+                </div>
+
+                <h2 style={{fontFamily:'var(--font-display)',fontSize:'1.2rem',color:'var(--white)',marginBottom:'0.9rem'}}>
+                  ALL PREDICTIONS ({ordered.filter(p => getOthersPred(p.id, match.id)).length}/{ordered.length})
+                </h2>
+                <div style={{display:'flex',flexDirection:'column',gap:'0.5rem'}}>
+                  {ordered.map(p => {
+                    const pred = getOthersPred(p.id, match.id)
+                    const isCorrectResult = pred?.is_result_correct
+                    const isCorrectScore = pred?.is_score_correct
+                    return (
+                      <div key={p.id} style={{
+                        display:'flex',alignItems:'center',justifyContent:'space-between',
+                        padding:'0.8rem 1.1rem',
+                        background:'rgba(30,30,26,0.9)',
+                        border:'1px solid rgba(255,255,255,0.07)',
+                        borderRadius:'var(--radius-lg)',
+                        flexWrap:'wrap',gap:'0.5rem',
+                      }}>
+                        <div style={{display:'flex',alignItems:'center',gap:'0.55rem',minWidth:'130px'}}>
+                          <span style={{fontSize:'1rem'}}>👤</span>
+                          <span style={{fontWeight:500,color:'var(--white)',fontSize:'0.9rem'}}>{displayName(p)}</span>
+                        </div>
+                        {pred ? (
+                          <div style={{display:'flex',alignItems:'center',gap:'0.75rem',flexWrap:'wrap'}}>
+                            <div style={{display:'flex',alignItems:'center',gap:'5px'}}>
+                              <FlagImg team={pred.predicted_result==='teamA'?match.team_a:pred.predicted_result==='teamB'?match.team_b:null} size={16}/>
+                              <span style={{fontSize:'0.875rem',color:'var(--white)',fontWeight:500}}>{getResultLabel(pred.predicted_result,match.team_a,match.team_b)}</span>
+                            </div>
+                            <span style={{fontFamily:'var(--font-display)',fontSize:'1.05rem',color:'var(--white)',letterSpacing:'0.04em'}}>
+                              {pred.predicted_score_a}–{pred.predicted_score_b}
+                            </span>
+                            {isCompleted && (
+                              isCorrectScore
+                                ? <span className="points-chip points-5">+5 pts ⚡</span>
+                                : isCorrectResult
+                                  ? <span className="points-chip points-3">+3 pts ✓</span>
+                                  : <span className="points-chip points-0">0 pts</span>
+                            )}
+                          </div>
+                        ) : (
+                          <span style={{color:'var(--gray-500)',fontSize:'0.875rem',fontStyle:'italic'}}>No prediction</span>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )
+          }
+
+          // ── Date detail view
+          if (othersSelectedDate) {
+            const dayMatches = byDate[othersSelectedDate] || []
+            return (
+              <div>
+                <div style={{display:'flex',alignItems:'center',gap:'0.5rem',marginBottom:'1.25rem',fontSize:'0.875rem',color:'var(--gray-500)'}}>
+                  <button onClick={() => setOthersSelectedDate(null)} style={{background:'none',border:'none',color:'var(--gray-500)',cursor:'pointer',padding:0}}>Others' Picks</button>
+                  <span>›</span>
+                  <span style={{color:'var(--white)'}}>{format(parseISO(othersSelectedDate),'EEEE, MMMM d yyyy')}</span>
+                </div>
+                <h2 style={{fontFamily:'var(--font-display)',fontSize:'1.4rem',color:'var(--white)',marginBottom:'0.5rem'}}>
+                  {othersSelectedDate === todayIST() ? '⚡ Today' : format(parseISO(othersSelectedDate),'EEE, MMM d')}
+                </h2>
+                <p style={{color:'var(--gray-500)',fontSize:'0.875rem',marginBottom:'1.25rem'}}>
+                  {dayMatches.length} match{dayMatches.length!==1?'es':''} — tap a match to see all predictions
+                </p>
+                <div style={{display:'flex',flexDirection:'column',gap:'0.65rem'}}>
+                  {dayMatches.map(match => {
+                    const isCompleted = match.result !== null
+                    const totalPreds = othersProfiles.filter(p => getOthersPred(p.id, match.id)).length
+                    return (
+                      <button
+                        key={match.id}
+                        onClick={() => setOthersSelectedMatch(match)}
+                        style={{
+                          background:'rgba(30,30,26,0.9)',
+                          border: isCompleted ? '1px solid rgba(245,200,66,0.2)' : '1px solid rgba(255,255,255,0.07)',
+                          borderRadius:'var(--radius-lg)',
+                          padding:'1rem 1.2rem',
+                          cursor:'pointer',textAlign:'left',width:'100%',
+                          transition:'border-color 0.15s',
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.borderColor='rgba(245,200,66,0.4)'}
+                        onMouseLeave={e => e.currentTarget.style.borderColor=isCompleted?'rgba(245,200,66,0.2)':'rgba(255,255,255,0.07)'}
+                      >
+                        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:'0.5rem',flexWrap:'wrap',gap:'0.4rem'}}>
+                          <span style={{fontSize:'0.72rem',fontWeight:600,color:'var(--gray-500)',textTransform:'uppercase',letterSpacing:'0.06em'}}>
+                            {match.stage}{match.group_name ? ` · Group ${match.group_name}` : ''} · {toIST(match.match_time)}
+                          </span>
+                          <div style={{display:'flex',gap:'0.4rem',alignItems:'center'}}>
+                            {isCompleted && <span className="match-result-badge">{match.score_a}–{match.score_b}</span>}
+                            <span style={{fontSize:'0.75rem',color:'var(--gray-500)',background:'rgba(255,255,255,0.06)',padding:'2px 8px',borderRadius:'99px'}}>
+                              {totalPreds}/{othersProfiles.length} picks
+                            </span>
+                            <span style={{color:'var(--gold)',fontSize:'0.85rem'}}>›</span>
+                          </div>
+                        </div>
+                        <div style={{display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap'}}>
+                          <span style={{display:'flex',alignItems:'center',gap:'6px',fontFamily:'var(--font-display)',fontSize:'1.15rem',color:'var(--white)'}}>
+                            <FlagImg team={match.team_a} size={20}/>{match.team_a}
+                          </span>
+                          <span style={{color:'var(--gray-500)',fontSize:'0.85rem'}}>vs</span>
+                          <span style={{display:'flex',alignItems:'center',gap:'6px',fontFamily:'var(--font-display)',fontSize:'1.15rem',color:'var(--white)'}}>
+                            <FlagImg team={match.team_b} size={20}/>{match.team_b}
+                          </span>
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )
+          }
+
+          // ── Date list view
+          return (
+            <div>
+              <p style={{color:'var(--gray-500)',fontSize:'0.9rem',marginBottom:'1.25rem'}}>
+                All predictions visible to admins regardless of match status. Pick a date, then a match.
+              </p>
+              {dates.length === 0 ? (
+                <div className="card" style={{textAlign:'center',padding:'2rem',color:'var(--gray-500)'}}>
+                  No matches found.
+                </div>
+              ) : (
+                <div style={{display:'flex',flexDirection:'column',gap:'0.6rem'}}>
+                  {dates.map(d => {
+                    const dayMatches = byDate[d]
+                    const completed = dayMatches.filter(m => m.result !== null).length
+                    const total = dayMatches.length
+                    return (
+                      <button
+                        key={d}
+                        onClick={() => setOthersSelectedDate(d)}
+                        style={{
+                          display:'flex',alignItems:'center',justifyContent:'space-between',
+                          padding:'1rem 1.2rem',
+                          background:'rgba(30,30,26,0.9)',
+                          border:'1px solid rgba(255,255,255,0.07)',
+                          borderRadius:'var(--radius-lg)',
+                          cursor:'pointer',textAlign:'left',width:'100%',
+                          transition:'border-color 0.15s',
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.borderColor='rgba(245,200,66,0.3)'}
+                        onMouseLeave={e => e.currentTarget.style.borderColor='rgba(255,255,255,0.07)'}
+                      >
+                        <div>
+                          <div style={{fontWeight:600,fontSize:'1rem',color:d===todayIST()?'var(--gold)':'var(--white)',marginBottom:'0.2rem'}}>
+                            {d===todayIST() ? '⚡ Today — ' : d < todayIST() ? '' : '🗓 '}
+                            {format(parseISO(d),'EEEE, MMMM d yyyy')}
+                          </div>
+                          <div style={{fontSize:'0.82rem',color:'var(--gray-500)'}}>
+                            {total} match{total!==1?'es':''} · {completed} completed
+                          </div>
+                        </div>
+                        <div style={{display:'flex',alignItems:'center',gap:'0.6rem'}}>
+                          <div style={{display:'flex',gap:'3px',flexWrap:'wrap',maxWidth:'110px'}}>
+                            {dayMatches.slice(0,6).flatMap(m=>[m.team_a,m.team_b]).map((t,i)=>(
+                              <FlagImg key={i} team={t} size={15}/>
+                            ))}
+                          </div>
+                          <span style={{color:'var(--gold)',fontSize:'1rem'}}>›</span>
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )
+        })()}
       </div>
     </>
   )
