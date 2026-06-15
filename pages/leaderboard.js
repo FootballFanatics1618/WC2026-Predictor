@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from 'react'
 import Navbar from '../components/Navbar'
 import FlagImg from '../components/FlagImg'
 import { supabase } from '../lib/supabase'
+import { shortName } from '../lib/flags'
 import { useDragScroll } from '../hooks/useDragScroll'
 
 export default function Leaderboard() {
@@ -49,7 +50,7 @@ export default function Leaderboard() {
       const gbBonus = p.golden_boot_correct ? 10 : 0
       const points = (predictions || []).filter(pr => pr.user_id === p.id).reduce((sum, pr) => sum + (pr.points_earned || 0), 0) + gbBonus
       return {
-        id: p.id, username: p.first_name && p.last_name ? `${p.first_name} ${p.last_name}` : p.username, goldenBoot: p.golden_boot_pick,
+        id: p.id, username: p.first_name && p.last_name ? `${p.first_name} ${p.last_name}` : p.username, firstName: p.first_name || p.username, goldenBoot: p.golden_boot_pick,
         goldenBootCorrect: p.golden_boot_correct || false,
         matchesPredicted, correctResults, correctScorelines, points,
       }
@@ -78,8 +79,8 @@ export default function Leaderboard() {
   }
 
   function getResultLabel(result, teamA, teamB) {
-    if (result === 'teamA') return `${teamA}`
-    if (result === 'teamB') return `${teamB}`
+    if (result === 'teamA') return `${shortName(teamA)}`
+    if (result === 'teamB') return `${shortName(teamB)}`
     if (result === 'draw') return 'Draw'
     return '—'
   }
@@ -106,9 +107,9 @@ export default function Leaderboard() {
     const draws = rows.filter(r => r.mine && r.theirs && r.mine.points_earned === r.theirs.points_earned).length
 
     return (
-      <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 300, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '1rem', overflowY: 'auto' }}
+      <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 300, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', overflowY: 'auto' }}
         onClick={() => setH2h(null)}>
-        <div style={{ background: 'var(--gray-900)', border: '1px solid rgba(245,200,66,0.3)', borderRadius: 'var(--radius-lg)', width: '100%', maxWidth: '680px', padding: '1.5rem', marginTop: '2rem' }}
+        <div style={{ background: 'var(--gray-900)', borderTop: '1px solid rgba(245,200,66,0.3)', borderRadius: 'var(--radius-lg) var(--radius-lg) 0 0', width: '100%', maxWidth: '680px', padding: '1.5rem', maxHeight: '85vh', overflowY: 'auto' }}
           onClick={e => e.stopPropagation()}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
             <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.4rem', color: 'var(--gold)' }}>HEAD TO HEAD</div>
@@ -117,48 +118,61 @@ export default function Leaderboard() {
 
           {/* Score summary */}
           <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '1.5rem', marginBottom: '1.25rem', padding: '1rem', background: 'rgba(255,255,255,0.03)', borderRadius: 'var(--radius)' }}>
-            <div style={{ textAlign: 'center' }}>
+            <div style={{ textAlign: 'center', flex: 1 }}>
               <div style={{ fontSize: '0.75rem', color: 'var(--gray-500)', marginBottom: '0.2rem' }}>You</div>
               <div style={{ fontFamily: 'var(--font-display)', fontSize: '2rem', color: myWins > oppWins ? 'var(--gold)' : 'var(--white)' }}>{myWins}</div>
             </div>
-            <div style={{ color: 'var(--gray-500)', fontFamily: 'var(--font-display)', fontSize: '1.2rem' }}>{draws} draws</div>
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: '0.75rem', color: 'var(--gray-500)', marginBottom: '0.2rem' }}>{opponent.username}</div>
+            <div style={{ color: 'var(--gray-500)', fontFamily: 'var(--font-display)', fontSize: '1.2rem', flex: 1, textAlign: 'center' }}>{draws} draws</div>
+            <div style={{ textAlign: 'center', flex: 1 }}>
+              <div style={{ fontSize: '0.75rem', color: 'var(--gray-500)', marginBottom: '0.2rem' }}>{opponent.firstName}</div>
               <div style={{ fontFamily: 'var(--font-display)', fontSize: '2rem', color: oppWins > myWins ? 'var(--gold)' : 'var(--white)' }}>{oppWins}</div>
             </div>
           </div>
 
           {/* Match by match */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', maxHeight: '55vh', overflowY: 'auto' }}>
+          <div style={{ maxHeight: '55vh', overflowY: 'auto' }}>
             {/* Header */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: '0.5rem', padding: '0.3rem 0.5rem', fontSize: '0.7rem', color: 'var(--gray-500)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
               <span>You</span>
               <span style={{ textAlign: 'center' }}>Match</span>
-              <span style={{ textAlign: 'right' }}>{opponent.username}</span>
+              <span style={{ textAlign: 'right' }}>{opponent.firstName}</span>
             </div>
+            <div style={{ display: 'grid', gridAutoRows: '1fr', gap: '0.4rem' }}>
             {rows.map(({ match: m, mine, theirs }) => {
               const myBetter = (mine?.points_earned ?? 0) > (theirs?.points_earned ?? 0)
               const theirBetter = (theirs?.points_earned ?? 0) > (mine?.points_earned ?? 0)
               return (
-                <div key={m.id} style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: '0.5rem', padding: '0.5rem 0.75rem', background: 'rgba(255,255,255,0.03)', borderRadius: '6px', alignItems: 'center', fontSize: '0.8rem' }}>
+                <div key={m.id} style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: '0.5rem', padding: '1rem 0.75rem', background: 'rgba(255,255,255,0.03)', borderRadius: '6px', alignItems: 'center', fontSize: '0.8rem' }}>
                   {/* My pick */}
-                  <div style={{ color: myBetter ? 'var(--gold)' : mine ? 'var(--white)' : 'var(--gray-700)' }}>
-                    {mine ? <>{getResultLabel(mine.predicted_result, m.team_a, m.team_b)} <span style={{ color: 'var(--gray-500)' }}>{mine.predicted_score_a}–{mine.predicted_score_b}</span></> : <span style={{ color: 'var(--gray-700)', fontSize: '0.75rem' }}>No pick</span>}
-                    {mine?.points_earned > 0 && <span style={{ marginLeft: '4px', fontSize: '0.7rem', color: mine.points_earned === 5 ? '#f59e0b' : 'var(--success)' }}>+{mine.points_earned}</span>}
+                  <div style={{ color: myBetter ? 'var(--gold)' : mine ? 'var(--white)' : 'var(--gray-700)', display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'flex-start' }}>
+                    {mine ? <>
+                      <div>{getResultLabel(mine.predicted_result, m.team_a, m.team_b)}</div>
+                      <div style={{ color: 'var(--gray-500)' }}>{mine.predicted_score_a}–{mine.predicted_score_b}</div>
+                      {mine?.points_earned > 0 && <span className={`points-chip points-${mine.points_earned}`} style={{ alignSelf: 'flex-start' }}>+{mine.points_earned}</span>}
+                    </> : <span style={{ color: 'var(--gray-700)', fontSize: '0.75rem' }}>No pick</span>}
                   </div>
                   {/* Match */}
-                  <div style={{ textAlign: 'center', fontSize: '0.7rem', color: 'var(--gray-500)', minWidth: '90px' }}>
-                    <div style={{ color: 'var(--white)', fontWeight: 600, fontSize: '0.75rem' }}>{m.team_a} v {m.team_b}</div>
+                  <div style={{ textAlign: 'center', fontSize: '0.7rem', color: 'var(--gray-500)', minWidth: '90px', display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                      <FlagImg team={m.team_a} size={18} />
+                      <span style={{ color: 'var(--gray-700)', fontSize: '0.65rem' }}>vs</span>
+                      <FlagImg team={m.team_b} size={18} />
+                    </div>
+                    <div style={{ color: 'var(--white)', fontWeight: 600, fontSize: '0.75rem' }}>{shortName(m.team_a)} v {shortName(m.team_b)}</div>
                     <div style={{ color: 'var(--success)', fontSize: '0.7rem' }}>FT {m.score_a}–{m.score_b}</div>
                   </div>
                   {/* Their pick */}
-                  <div style={{ textAlign: 'right', color: theirBetter ? 'var(--gold)' : theirs ? 'var(--white)' : 'var(--gray-700)' }}>
-                    {theirs?.points_earned > 0 && <span style={{ marginRight: '4px', fontSize: '0.7rem', color: theirs.points_earned === 5 ? '#f59e0b' : 'var(--success)' }}>+{theirs.points_earned}</span>}
-                    {theirs ? <>{getResultLabel(theirs.predicted_result, m.team_a, m.team_b)} <span style={{ color: 'var(--gray-500)' }}>{theirs.predicted_score_a}–{theirs.predicted_score_b}</span></> : <span style={{ color: 'var(--gray-700)', fontSize: '0.75rem' }}>No pick</span>}
+                  <div style={{ textAlign: 'right', color: theirBetter ? 'var(--gold)' : theirs ? 'var(--white)' : 'var(--gray-700)', display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'flex-end' }}>
+                    {theirs ? <>
+                      <div>{getResultLabel(theirs.predicted_result, m.team_a, m.team_b)}</div>
+                      <div style={{ color: 'var(--gray-500)' }}>{theirs.predicted_score_a}–{theirs.predicted_score_b}</div>
+                      {theirs?.points_earned > 0 && <span className={`points-chip points-${theirs.points_earned}`}>+{theirs.points_earned}</span>}
+                    </> : <span style={{ color: 'var(--gray-700)', fontSize: '0.75rem' }}>No pick</span>}
                   </div>
                 </div>
               )
             })}
+            </div>
           </div>
         </div>
       </div>
@@ -207,15 +221,15 @@ export default function Leaderboard() {
                   <div style={{ fontSize: '0.75rem', color: 'var(--success)', marginTop: '2px' }}>Leading the table 🏆</div>
                 )}
               </div>
-              <div style={{ textAlign: 'center' }}>
+              <div style={{ textAlign: 'center', flex: 1 }}>
                 <span style={{ color: 'var(--gray-500)', fontSize: '0.85rem' }}>Points</span>
                 <div style={{ fontFamily: 'var(--font-display)', fontSize: '2rem', color: 'var(--white)' }}>{myRow.points}</div>
               </div>
-              <div style={{ textAlign: 'center' }}>
+              <div style={{ textAlign: 'center', flex: 1 }}>
                 <span style={{ color: 'var(--gray-500)', fontSize: '0.85rem' }}>Correct Results</span>
                 <div style={{ fontFamily: 'var(--font-display)', fontSize: '2rem', color: 'var(--white)' }}>{myRow.correctResults}</div>
               </div>
-              <div style={{ textAlign: 'center' }}>
+              <div style={{ textAlign: 'center', flex: 1 }}>
                 <span style={{ color: 'var(--gray-500)', fontSize: '0.85rem' }}>Correct Scorelines</span>
                 <div style={{ fontFamily: 'var(--font-display)', fontSize: '2rem', color: 'var(--white)' }}>{myRow.correctScorelines}</div>
               </div>
@@ -239,10 +253,10 @@ export default function Leaderboard() {
                   <tr>
                     <th style={{ width: '40px' }}>#</th>
                     <th>Player</th>
-                    <th style={{ textAlign: 'center' }}>MP</th>
+                    <th style={{ textAlign: 'center' }}>PTS</th>
                     <th style={{ textAlign: 'center' }}>CR</th>
                     <th style={{ textAlign: 'center' }}>CS</th>
-                    <th style={{ textAlign: 'center' }}>PTS</th>
+                    <th style={{ textAlign: 'center' }}>MP</th>
                     <th>GB Pick</th>
                   </tr>
                 </thead>
@@ -259,7 +273,7 @@ export default function Leaderboard() {
                           ...(canH2H ? { cursor: 'pointer' } : {}),
                         }}
                         title={canH2H ? `Compare vs ${row.username}` : undefined}>
-                        <td style={{ background: isMe ? 'rgba(245,200,66,0.06)' : 'var(--gray-900)' }}>
+                        <td style={{ background: isMe ? 'rgba(245,200,66,0.06)' : 'var(--gray-900)', borderLeft: rank > table.length - 4 ? '2px solid var(--danger)' : undefined, position: 'sticky', left: 0, zIndex: 1 }}>
                           {rank <= 3
                             ? <span style={{ fontSize: '1.1rem' }}>{medalEmoji(rank)}</span>
                             : <span style={{ color: 'var(--gray-500)', fontSize: '0.9rem' }}>{rank}</span>}
@@ -270,9 +284,6 @@ export default function Leaderboard() {
                             {canH2H && <span style={{ fontSize: '0.65rem', color: 'var(--gray-600)', marginLeft: '4px' }}>H2H</span>}
                           </span>
                         </td>
-                        <td style={{ textAlign: 'center', color: 'var(--gray-500)' }}>{row.matchesPredicted}</td>
-                        <td style={{ textAlign: 'center' }}>{row.correctResults}</td>
-                        <td style={{ textAlign: 'center' }}>{row.correctScorelines}</td>
                         <td style={{ textAlign: 'center', fontWeight: 700, color: rank === 1 ? 'var(--gold)' : 'var(--white)', fontFamily: 'var(--font-display)', fontSize: '1.1rem', cursor: 'help', position: 'relative' }}
                           onMouseEnter={e => setTooltip({ id: row.id, x: e.clientX - 80, y: e.clientY + 12 })}
                           onMouseLeave={() => setTooltip(null)}
@@ -280,6 +291,9 @@ export default function Leaderboard() {
                           {row.points}
                           <PointsTooltip rowId={row.id} />
                         </td>
+                        <td style={{ textAlign: 'center' }}>{row.correctResults}</td>
+                        <td style={{ textAlign: 'center' }}>{row.correctScorelines}</td>
+                        <td style={{ textAlign: 'center', color: 'var(--gray-500)' }}>{row.matchesPredicted}</td>
                         <td style={{ fontSize: '0.85rem', color: row.goldenBootCorrect ? 'var(--gold)' : 'var(--gray-500)' }}>
                           {row.goldenBoot || '—'} {row.goldenBootCorrect && '🥇'}
                         </td>
