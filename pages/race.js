@@ -124,13 +124,22 @@ export default function Race() {
   const playerCount      = slicedTable.length
 
   const matchesByPhase = {}
-  for (const m of completedMatches) {
+  const allMatchesByPhase = {}
+  for (const m of allMatches.filter(m => m.id !== 9999)) {
     const phase = getPhase(m, matchdayMap)
     if (!phase) continue
-    if (!matchesByPhase[phase]) matchesByPhase[phase] = []
-    matchesByPhase[phase].push(m)
+    if (!allMatchesByPhase[phase]) allMatchesByPhase[phase] = []
+    allMatchesByPhase[phase].push(m)
+    if (m.result !== null) {
+      if (!matchesByPhase[phase]) matchesByPhase[phase] = []
+      matchesByPhase[phase].push(m)
+    }
   }
-  const completedPhases = PHASE_ORDER.filter(p => matchesByPhase[p])
+  // Only show a phase once every match in it has a result
+  const completedPhases = PHASE_ORDER.filter(p =>
+    allMatchesByPhase[p]?.length > 0 &&
+    allMatchesByPhase[p].every(m => m.result !== null)
+  )
   const n = completedPhases.length
 
   function playerColor(i, id) {
