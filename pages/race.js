@@ -9,6 +9,43 @@ const SHOW_OPTIONS = [
   { label: 'All',    value: 999 },
 ]
 
+const PHASE_ORDER = ['MD1', 'MD2', 'MD3', 'R32', 'R16', 'QF', 'SF', '3rd', 'Final']
+const PHASE_LABELS = {
+  MD1: 'Matchday 1', MD2: 'Matchday 2', MD3: 'Matchday 3',
+  R32: 'Round of 32', R16: 'Round of 16', QF: 'Quarter-final',
+  SF: 'Semi-final', '3rd': '3rd Place', Final: 'Final',
+}
+
+function assignMatchdays(matches) {
+  const byGroup = {}
+  for (const m of matches) {
+    if (m.stage !== 'Group Stage') continue
+    if (!byGroup[m.group_name]) byGroup[m.group_name] = []
+    byGroup[m.group_name].push(m)
+  }
+  const result = {}
+  for (const gMatches of Object.values(byGroup)) {
+    const sorted = [...gMatches].sort((a, b) =>
+      a.match_date !== b.match_date
+        ? a.match_date.localeCompare(b.match_date)
+        : (a.match_time || '').localeCompare(b.match_time || '')
+    )
+    sorted.forEach((m, i) => { result[m.id] = `MD${Math.floor(i / 2) + 1}` })
+  }
+  return result
+}
+
+function getPhase(match, matchdayMap) {
+  if (match.stage === 'Group Stage')        return matchdayMap[match.id] || null
+  if (match.stage === 'Round of 32')        return 'R32'
+  if (match.stage === 'Round of 16')        return 'R16'
+  if (match.stage === 'Quarter-final')      return 'QF'
+  if (match.stage === 'Semi-final')         return 'SF'
+  if (match.stage === '3rd Place Play-off') return '3rd'
+  if (match.stage === 'Final')              return 'Final'
+  return null
+}
+
 export default function Race() {
   const [user, setUser]               = useState(null)
   const [profile, setProfile]         = useState(null)
@@ -38,7 +75,7 @@ export default function Race() {
 
     const { data: matches } = await supabase
       .from('matches')
-      .select('id, team_a, team_b, result, score_a, score_b, match_date, match_time')
+      .select('id, team_a, team_b, result, score_a, score_b, match_date, match_time, stage, group_name')
       .order('match_date').order('match_time')
 
     if (!profiles) return
@@ -79,14 +116,23 @@ export default function Race() {
     setLoading(false)
   }
 
-  // ── Chart computation ─────────────────────────────────────────────────────────
+  // ── Phase computation ─────────────────────────────────────────────────────────
   const completedMatches = allMatches.filter(m => m.result !== null && m.id !== 9999)
-  const myId = profile?.id
+  const matchdayMap      = assignMatchdays(allMatches)
+  const myId             = profile?.id
+  const slicedTable      = table.slice(0, showCount)
+  const playerCount      = slicedTable.length
 
-  const slicedTable = table.slice(0, showCount)
-
-  const playerCount = slicedTable.length
-  const n = completedMatches.length
+  // Group completed matches by phase
+  const matchesByPhase = {}
+  for (const m of completedMatches) {
+    const phase = getPhase(m, matchdayMap)
+    if (!phase) continue
+    if (!matchesByPhase[phase]) matchesByPhase[phase] = []
+    matchesByPhase[phase].push(m)
+  }
+  const completedPhases = PHASE_ORDER.filter(p => matchesByPhase[p])
+  const n = completedPhases.length
 
   function playerColor(i, id) {
     if (id === myId) return '#f5c842'
@@ -97,11 +143,13 @@ export default function Race() {
   const cumByPlayer = slicedTable.map((row, pi) => {
     let pts = 0, cs = 0, cr = 0
     const ptsArr = [0], csArr = [0], crArr = [0]
-    for (const m of completedMatches) {
-      const pred = allPredictions.find(p => p.user_id === row.id && p.match_id === m.id)
-      pts += pred?.points_earned || 0
-      cs  += pred?.is_score_correct  ? 1 : 0
-      cr  += pred?.is_result_correct ? 1 : 0
+    for (const phase of completedPhases) {
+      for (const m of matchesByPhase[phase]) {
+        const pred = allPredictions.find(p => p.user_id === row.id && p.match_id === m.id)
+        pts += pred?.points_earned || 0
+        cs  += pred?.is_score_correct  ? 1 : 0
+        cr  += pred?.is_result_correct ? 1 : 0
+      }
       ptsArr.push(pts); csArr.push(cs); crArr.push(cr)
     }
     return { id: row.id, name: row.username, ptsArr, csArr, crArr, color: playerColor(pi, row.id) }
@@ -124,10 +172,10 @@ export default function Race() {
   const legendSorted = [...series].sort((a, b) => a.finalRank - b.finalRank)
 
   // ── SVG dimensions ────────────────────────────────────────────────────────────
-  const W = Math.max(420, n * 22 + 60)  // widen with match count so dots don't squish
+  const W     = Math.max(500, n * 90 + 80)
   const ROW_H = Math.max(16, Math.min(32, Math.floor(380 / Math.max(playerCount, 1))))
-  const H = playerCount * ROW_H + 60
-  const PAD = { top: 20, right: 20, bottom: 32, left: 36 }
+  const H     = playerCount * ROW_H + 70
+  const PAD   = { top: 20, right: 30, bottom: 44, left: 36 }
   const chartW = W - PAD.left - PAD.right
   const chartH = H - PAD.top - PAD.bottom
 
@@ -141,7 +189,7 @@ export default function Race() {
       <div className="page">
         <h1 className="section-title">RANK RACE</h1>
         <p style={{ color: 'var(--gray-500)', fontSize: '0.85rem', marginBottom: '1.5rem', marginTop: '-0.5rem' }}>
-          How each player's position has moved after every completed match
+          How each player's position has moved across each stage of the tournament
         </p>
 
         {/* Controls */}
@@ -163,7 +211,7 @@ export default function Race() {
             ))}
           </div>
           <span style={{ fontSize: '0.75rem', color: 'var(--gray-600)', marginLeft: 'auto' }}>
-            {playerCount} players · {n} matches
+            {playerCount} players · {n} phases
           </span>
         </div>
 
@@ -195,14 +243,26 @@ export default function Race() {
                   )
                 })}
 
-                {/* X axis match labels */}
-                {completedMatches.map((_, i) => {
-                  // Show at most ~25 labels — step up as match count grows
-                  const step = Math.max(1, Math.ceil(n / 25))
-                  if ((i + 1) % step !== 0 && i !== n - 1) return null
+                {/* Vertical phase separator lines */}
+                {completedPhases.map((phase, i) => {
+                  const x = xPos(i + 1)
+                  const isKnockout = !phase.startsWith('MD')
                   return (
-                    <text key={i} x={xPos(i + 1)} y={H - PAD.bottom + 14} textAnchor="middle" fontSize="8.5" fill="rgba(255,255,255,0.22)">
-                      M{i + 1}
+                    <line key={phase} x1={x} y1={PAD.top} x2={x} y2={H - PAD.bottom}
+                      stroke={isKnockout ? 'rgba(245,200,66,0.12)' : 'rgba(255,255,255,0.04)'}
+                      strokeWidth="1" strokeDasharray="3,5" />
+                  )
+                })}
+
+                {/* X axis phase labels */}
+                {completedPhases.map((phase, i) => {
+                  const x = xPos(i + 0.5)
+                  const label = PHASE_LABELS[phase]
+                  const isKnockout = !phase.startsWith('MD')
+                  return (
+                    <text key={phase} x={x} y={H - PAD.bottom + 14} textAnchor="middle" fontSize="8.5"
+                      fill={isKnockout ? 'rgba(245,200,66,0.55)' : 'rgba(255,255,255,0.3)'} fontWeight={isKnockout ? '700' : '400'}>
+                      {label}
                     </text>
                   )
                 })}
@@ -236,19 +296,20 @@ export default function Race() {
                   if (!s) return null
                   const lastPos = s.positions[n]
                   const lx = xPos(n), ly = yPos(lastPos)
-                  const labelW = s.name.length * 6.5 + 16
+                  const labelW = s.name.length * 5.8 + 12
+                  const clampedLx = Math.min(Math.max(lx, PAD.left + labelW / 2), W - PAD.right - labelW / 2)
                   return (
                     <g onMouseLeave={() => setHoveredId(null)}>
                       <polyline
                         points={s.positions.map((pos, i) => `${xPos(i)},${yPos(pos)}`).join(' ')}
-                        fill="none" stroke={s.color} strokeWidth="3.1" opacity="1"
+                        fill="none" stroke={s.color} strokeWidth="2" opacity="0.9"
                         strokeLinejoin="round" strokeLinecap="round"
                       />
                       {s.positions.map((pos, i) => (
-                        <circle key={i} cx={xPos(i)} cy={yPos(pos)} r={i === 0 || i === n ? 3.8 : 3} fill={s.color} />
+                        <circle key={i} cx={xPos(i)} cy={yPos(pos)} r={i === 0 || i === n ? 3 : 2.5} fill={s.color} />
                       ))}
-                      <rect x={lx - labelW / 2} y={ly - 24} width={labelW} height={16} rx="4" fill="rgba(10,10,16,0.95)" />
-                      <text x={lx} y={ly - 12} textAnchor="middle" fontSize="10.5" fill={s.color} fontWeight="700">{s.name}</text>
+                      <rect x={clampedLx - labelW / 2} y={ly - 20} width={labelW} height={14} rx="3" fill="rgba(10,10,16,0.92)" />
+                      <text x={clampedLx} y={ly - 9} textAnchor="middle" fontSize="9" fill={s.color} fontWeight="600">{s.name}</text>
                     </g>
                   )
                 })()}
@@ -258,19 +319,20 @@ export default function Race() {
                   const s = series.find(p => p.id === myId)
                   if (!s) return null
                   const lx = xPos(n), ly = yPos(s.positions[n])
-                  const labelW = (s.name + ' (you)').length * 6.5 + 16
+                  const labelW = (s.name + ' (you)').length * 5.8 + 12
+                  const clampedLx = Math.min(Math.max(lx, PAD.left + labelW / 2), W - PAD.right - labelW / 2)
                   return (
                     <g>
                       <polyline
                         points={s.positions.map((pos, i) => `${xPos(i)},${yPos(pos)}`).join(' ')}
-                        fill="none" stroke="#f5c842" strokeWidth="3.75" opacity="1"
+                        fill="none" stroke="#f5c842" strokeWidth="2.5" opacity="1"
                         strokeLinejoin="round" strokeLinecap="round"
                       />
                       {s.positions.map((pos, i) => (
-                        <circle key={i} cx={xPos(i)} cy={yPos(pos)} r={i === 0 || i === n ? 4.5 : 3.4} fill="#f5c842" />
+                        <circle key={i} cx={xPos(i)} cy={yPos(pos)} r={i === 0 || i === n ? 3.5 : 2.8} fill="#f5c842" />
                       ))}
-                      <rect x={lx - labelW / 2} y={ly - 24} width={labelW} height={16} rx="4" fill="rgba(10,10,16,0.95)" />
-                      <text x={lx} y={ly - 12} textAnchor="middle" fontSize="10.5" fill="#f5c842" fontWeight="700">{s.name} (you)</text>
+                      <rect x={clampedLx - labelW / 2} y={ly - 20} width={labelW} height={14} rx="3" fill="rgba(10,10,16,0.92)" />
+                      <text x={clampedLx} y={ly - 9} textAnchor="middle" fontSize="9" fill="#f5c842" fontWeight="700">{s.name} (you)</text>
                     </g>
                   )
                 })()}
