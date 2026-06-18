@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/router'
 import Navbar from '../components/Navbar'
 import FlagImg from '../components/FlagImg'
@@ -16,7 +16,8 @@ export default function Others() {
   const [myId, setMyId] = useState(null)
   const [matches, setMatches] = useState([])
   const [profiles, setProfiles] = useState([])
-  const [allPredictions, setAllPredictions] = useState([])
+  const [datePredictions, setDatePredictions] = useState([])
+  const [predsLoading, setPredsLoading] = useState(false)
   const [loading, setLoading] = useState(true)
   // Navigation state: null = date list, string = date selected, number = match selected
   const [selectedDate, setSelectedDate] = useState(null)
@@ -31,18 +32,15 @@ export default function Others() {
     setUser(session.user)
     setMyId(session.user.id)
 
-    const [matchesRes, profilesRes, predsRes] = await Promise.all([
+    const [matchesRes, profilesRes] = await Promise.all([
       supabase.from('matches').select('*').order('match_date').order('match_time'),
       supabase.from('profiles').select('id, username, first_name, last_name, golden_boot_pick'),
-      supabase.from('predictions').select('*'),
     ])
     setMatches(matchesRes.data || [])
     setProfiles(profilesRes.data || [])
-    setAllPredictions(predsRes.data || [])
     setLoading(false)
   }
 
-  // Show ALL matches — predictions visible immediately (not gated by match date)
   const visibleMatches = matches
 
   const byDate = {}
@@ -50,11 +48,33 @@ export default function Others() {
     if (!byDate[m.match_date]) byDate[m.match_date] = []
     byDate[m.match_date].push(m)
   })
-  const dates = Object.keys(byDate).sort() // ascending: earliest date first
+  const dates = Object.keys(byDate).sort()
 
-  function getPrediction(userId, matchId) {
-    return allPredictions.find(p => p.user_id === userId && p.match_id === matchId)
+  function getDatePrediction(userId, matchId) {
+    return datePredictions.find(p => p.user_id === userId && p.match_id === matchId)
   }
+
+  const selectDate = useCallback(async (date) => {
+    setSelectedDate(date)
+    setPredsLoading(true)
+    const dayMatchIds = (byDate[date] || []).map(m => m.id)
+    if (dayMatchIds.length > 0) {
+      const { data } = await supabase
+        .from('predictions')
+        .select('*')
+        .in('match_id', dayMatchIds)
+      setDatePredictions(data || [])
+    } else {
+      setDatePredictions([])
+    }
+    setPredsLoading(false)
+  }, [byDate])
+
+  const backToDates = useCallback(() => {
+    setSelectedDate(null)
+    setSelectedMatch(null)
+    setDatePredictions([])
+  }, [])
 
   function displayName(profile) {
     if (profile.first_name && profile.last_name) return `${profile.first_name} ${profile.last_name}`
@@ -84,6 +104,7 @@ export default function Others() {
     const match = selectedMatch
     const isCompleted = match.result !== null
     const ordered = orderedProfiles()
+    const matchPreds = datePredictions.filter(p => p.match_id === match.id)
 
     return (
       <>
@@ -91,7 +112,7 @@ export default function Others() {
         <div className="page">
           {/* Breadcrumb */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.5rem', fontSize: '0.875rem', color: 'var(--gray-500)' }}>
-            <button onClick={() => { setSelectedDate(null); setSelectedMatch(null) }} style={{ background: 'none', border: 'none', color: 'var(--gray-500)', cursor: 'pointer', padding: 0 }}>Others' Picks</button>
+            <button onClick={backToDates} style={{ background: 'none', border: 'none', color: 'var(--gray-500)', cursor: 'pointer', padding: 0 }}>Others' Picks</button>
             <span>›</span>
             <button onClick={() => setSelectedMatch(null)} style={{ background: 'none', border: 'none', color: 'var(--gray-500)', cursor: 'pointer', padding: 0 }}>
               {(() => {
@@ -132,11 +153,11 @@ export default function Others() {
 
           {/* Predictions list */}
           <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.4rem', color: 'var(--white)', marginBottom: '1rem' }}>
-            EVERYONE'S PREDICTIONS ({ordered.filter(p => getPrediction(p.id, match.id)).length}/{ordered.length})
+            EVERYONE'S PREDICTIONS ({matchPreds.length}/{ordered.length})
           </h2>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
             {ordered.map(p => {
-              const pred = getPrediction(p.id, match.id)
+              const pred = getDatePrediction(p.id, match.id)
               const isMe = p.id === myId
               const isCorrectResult = pred?.is_result_correct
               const isCorrectScore = pred?.is_score_correct
@@ -201,7 +222,7 @@ export default function Others() {
         <div className="page">
           {/* Breadcrumb */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.5rem', fontSize: '0.875rem', color: 'var(--gray-500)' }}>
-            <button onClick={() => setSelectedDate(null)} style={{ background: 'none', border: 'none', color: 'var(--gray-500)', cursor: 'pointer', padding: 0 }}>Others' Picks</button>
+            <button onClick={backToDates} style={{ background: 'none', border: 'none', color: 'var(--gray-500)', cursor: 'pointer', padding: 0 }}>Others' Picks</button>
             <span>›</span>
             <span style={{ color: 'var(--white)' }}>{isToday(parseISO(selectedDate)) ? 'Today' : format(parseISO(selectedDate), 'EEEE, MMMM d yyyy')}</span>
           </div>
@@ -213,10 +234,14 @@ export default function Others() {
             {dayMatches.length} match{dayMatches.length !== 1 ? 'es' : ''} — click a match to see everyone's predictions
           </p>
 
+          {predsLoading && (
+            <div style={{ textAlign: 'center', padding: '1.5rem', color: 'var(--gray-500)', fontSize: '0.875rem' }}>Loading predictions...</div>
+          )}
+
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
             {dayMatches.map(match => {
               const isCompleted = match.result !== null
-              const totalPredictions = profiles.filter(p => getPrediction(p.id, match.id)).length
+              const totalPredictions = datePredictions.filter(p => p.match_id === match.id).length
 
               return (
                 <button
@@ -290,7 +315,7 @@ export default function Others() {
               return (
                 <button
                   key={d}
-                  onClick={() => setSelectedDate(d)}
+                  onClick={() => selectDate(d)}
                   style={{
                     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                     padding: '1rem 1.25rem',

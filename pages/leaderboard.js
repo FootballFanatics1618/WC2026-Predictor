@@ -35,11 +35,26 @@ export default function Leaderboard() {
 
   async function fetchTable() {
     const { data: profiles } = await supabase.from('profiles').select('id, username, first_name, last_name, golden_boot_pick, golden_boot_correct')
-    const { data: predictions } = await supabase.from('predictions').select('*')
     const { data: matches } = await supabase.from('matches').select('id, team_a, team_b, stage, result, score_a, score_b, match_date').order('match_date')
     if (!profiles) return
-    setAllPredictions(predictions || [])
     setAllMatches(matches || [])
+
+    // Paginate predictions to bypass PostgREST's db-max-rows limit (1000)
+    let allPreds = []
+    let from = 0
+    const pageSize = 999
+    while (true) {
+      const { data: chunk } = await supabase
+        .from('predictions')
+        .select('*')
+        .range(from, from + pageSize)
+      if (!chunk || chunk.length === 0) break
+      allPreds = allPreds.concat(chunk)
+      if (chunk.length < pageSize) break
+      from += pageSize
+    }
+    const predictions = allPreds
+    setAllPredictions(predictions)
 
     const rows = profiles.map(p => {
       const userPreds = (predictions || []).filter(pr => pr.user_id === p.id && pr.match_id !== 9999)
@@ -208,37 +223,44 @@ export default function Leaderboard() {
 
         {myRow && (
           <div className="card-gold" style={{ marginBottom: '1.5rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
-              <div>
-                <span style={{ color: 'var(--gray-500)', fontSize: '0.85rem' }}>Your rank</span>
-                <div style={{ fontFamily: 'var(--font-display)', fontSize: '2rem', color: 'var(--gold)' }}>#{myRank}</div>
+            {/* Rank + Points grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
+              <div style={{ background: 'rgba(255,255,255,0.04)', borderRadius: 'var(--radius)', padding: '0.65rem 0.85rem', textAlign: 'center' }}>
+                <div style={{ fontSize: '0.7rem', color: 'var(--gray-500)', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Your Rank</div>
+                <div style={{ fontFamily: 'var(--font-display)', fontSize: '2rem', color: 'var(--gold)', lineHeight: 1.2, marginTop: '2px' }}>#{myRank}</div>
                 {myRank > 1 && table[0] && (
-                  <div style={{ fontSize: '0.75rem', color: 'var(--gray-500)', marginTop: '2px' }}>
-                    {table[0].points - myRow.points} pts behind <span style={{ color: 'var(--white)', fontWeight: 600 }}>{table[0].username}</span>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--gray-500)', marginTop: '4px' }}>
+                    {table[0].points - myRow.points} behind leader
                   </div>
                 )}
                 {myRank === 1 && (
-                  <div style={{ fontSize: '0.75rem', color: 'var(--success)', marginTop: '2px' }}>Leading the table 🏆</div>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--success)', marginTop: '4px' }}>Leading 🏆</div>
                 )}
               </div>
-              <div style={{ textAlign: 'center', flex: 1 }}>
-                <span style={{ color: 'var(--gray-500)', fontSize: '0.85rem' }}>Points</span>
-                <div style={{ fontFamily: 'var(--font-display)', fontSize: '2rem', color: 'var(--white)' }}>{myRow.points}</div>
+              <div style={{ background: 'rgba(255,255,255,0.04)', borderRadius: 'var(--radius)', padding: '0.65rem 0.85rem', textAlign: 'center' }}>
+                <div style={{ fontSize: '0.7rem', color: 'var(--gray-500)', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Points</div>
+                <div style={{ fontFamily: 'var(--font-display)', fontSize: '2rem', color: 'var(--white)', lineHeight: 1.2, marginTop: '2px' }}>{myRow.points}</div>
               </div>
-              <div style={{ textAlign: 'center', flex: 1 }}>
-                <span style={{ color: 'var(--gray-500)', fontSize: '0.85rem' }}>Correct Results</span>
-                <div style={{ fontFamily: 'var(--font-display)', fontSize: '2rem', color: 'var(--white)' }}>{myRow.correctResults}</div>
+            </div>
+
+            {/* CR + CS grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
+              <div style={{ background: 'rgba(255,255,255,0.04)', borderRadius: 'var(--radius)', padding: '0.65rem 0.85rem', textAlign: 'center' }}>
+                <div style={{ fontSize: '0.7rem', color: 'var(--gray-500)', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Correct Results</div>
+                <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.5rem', color: 'var(--white)', lineHeight: 1.2, marginTop: '2px' }}>{myRow.correctResults}</div>
               </div>
-              <div style={{ textAlign: 'center', flex: 1 }}>
-                <span style={{ color: 'var(--gray-500)', fontSize: '0.85rem' }}>Correct Scorelines</span>
-                <div style={{ fontFamily: 'var(--font-display)', fontSize: '2rem', color: 'var(--white)' }}>{myRow.correctScorelines}</div>
+              <div style={{ background: 'rgba(255,255,255,0.04)', borderRadius: 'var(--radius)', padding: '0.65rem 0.85rem', textAlign: 'center' }}>
+                <div style={{ fontSize: '0.7rem', color: 'var(--gray-500)', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Correct Scorelines</div>
+                <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.5rem', color: 'var(--white)', lineHeight: 1.2, marginTop: '2px' }}>{myRow.correctScorelines}</div>
               </div>
-              <div>
-                <span style={{ color: 'var(--gray-500)', fontSize: '0.85rem' }}>Golden Boot Pick</span>
-                <div style={{ fontWeight: 600, color: myRow.goldenBootCorrect ? 'var(--gold)' : 'var(--white)', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}>
-                  {myRow.goldenBootCorrect ? '🥇 ' : ''}{myRow.goldenBoot || '—'}
-                </div>
-              </div>
+            </div>
+
+            {/* Golden Boot row */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.6rem 0.85rem', background: 'rgba(245,200,66,0.06)', borderRadius: 'var(--radius)', border: '1px solid rgba(245,200,66,0.1)' }}>
+              <span style={{ fontSize: '0.8rem', color: 'var(--gray-500)', fontWeight: 500 }}>Golden Boot Pick</span>
+              <span style={{ fontWeight: 600, color: myRow.goldenBootCorrect ? 'var(--gold)' : 'var(--white)', display: 'flex', alignItems: 'center', gap: '5px', fontSize: '0.9rem' }}>
+                {myRow.goldenBootCorrect ? '🥇 ' : ''}{myRow.goldenBoot || '—'}
+              </span>
             </div>
           </div>
         )}

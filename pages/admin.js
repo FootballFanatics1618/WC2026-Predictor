@@ -108,6 +108,15 @@ export default function Admin() {
     setUser(session.user)
     if (!ADMIN_EMAILS.includes(session.user.email)) { setLoading(false); return }
     setIsAdmin(true)
+
+    // Restore active tab from localStorage
+    try {
+      const savedTab = localStorage.getItem('adminActiveTab')
+      if (savedTab === 'sync' || savedTab === 'gb' || savedTab === 'others') {
+        setActiveTab(savedTab)
+      }
+    } catch (e) {}
+
     await Promise.all([loadMatches(), loadStandings(), loadSyncLog(), loadGbStatus(), loadOthersData()])
     setLoading(false)
   }
@@ -132,12 +141,20 @@ export default function Admin() {
   }
 
   async function loadOthersData() {
-    const [profilesRes, predsRes] = await Promise.all([
+    const [profilesRes] = await Promise.all([
       supabase.from('profiles').select('id, username, first_name, last_name, golden_boot_pick'),
-      supabase.from('predictions').select('*'),
     ])
     setOthersProfiles(profilesRes.data || [])
-    setAllPredictions(predsRes.data || [])
+  }
+
+  async function loadOthersDatePredictions(date) {
+    const dayMatchIds = matches.filter(m => matchISTDate(m.match_date, m.match_time) === date).map(m => m.id)
+    if (dayMatchIds.length > 0) {
+      const { data } = await supabase.from('predictions').select('*').in('match_id', dayMatchIds)
+      setAllPredictions(data || [])
+    } else {
+      setAllPredictions([])
+    }
   }
 
   const loadSyncLog = useCallback(async () => {
@@ -571,16 +588,16 @@ export default function Admin() {
 
         {/* Top-level tabs */}
         <div className="tabs" style={{marginBottom:'1.5rem'}}>
-          <button className={`tab-btn ${activeTab==='results'?'active':''}`} onClick={() => { preserveScroll(); setActiveTab('results') }}>
+          <button className={`tab-btn ${activeTab==='results'?'active':''}`} onClick={() => { preserveScroll(); setActiveTab('results'); localStorage.setItem('adminActiveTab', 'results') }}>
             Match Results
           </button>
-          <button className={`tab-btn ${activeTab==='sync'?'active':''}`} onClick={() => { preserveScroll(); setActiveTab('sync'); loadSyncLog() }}>
+          <button className={`tab-btn ${activeTab==='sync'?'active':''}`} onClick={() => { preserveScroll(); setActiveTab('sync'); loadSyncLog(); localStorage.setItem('adminActiveTab', 'sync') }}>
             Auto-Sync
           </button>
-          <button className={`tab-btn ${activeTab==='gb'?'active':''}`} onClick={() => { preserveScroll(); setActiveTab('gb') }}>
+          <button className={`tab-btn ${activeTab==='gb'?'active':''}`} onClick={() => { preserveScroll(); setActiveTab('gb'); localStorage.setItem('adminActiveTab', 'gb') }}>
             Golden Boot
           </button>
-          <button className={`tab-btn ${activeTab==='others'?'active':''}`} onClick={() => { setActiveTab('others'); loadOthersData(); setOthersSelectedDate(null); setOthersSelectedMatch(null) }}>
+          <button className={`tab-btn ${activeTab==='others'?'active':''}`} onClick={() => { setActiveTab('others'); loadOthersData(); setOthersSelectedDate(null); setOthersSelectedMatch(null); localStorage.setItem('adminActiveTab', 'others') }}>
             Others' Picks
           </button>
         </div>
@@ -1279,7 +1296,7 @@ export default function Admin() {
             return (
               <div>
                 <div style={{display:'flex',alignItems:'center',gap:'0.5rem',marginBottom:'1.25rem',fontSize:'0.875rem',color:'var(--gray-500)'}}>
-                  <button onClick={() => setOthersSelectedDate(null)} style={{background:'none',border:'none',color:'var(--gray-500)',cursor:'pointer',padding:0}}>Others' Picks</button>
+                  <button onClick={() => { setOthersSelectedDate(null); setAllPredictions([]) }} style={{background:'none',border:'none',color:'var(--gray-500)',cursor:'pointer',padding:0}}>Others' Picks</button>
                   <span>›</span>
                   <span style={{color:'var(--white)'}}>{format(parseISO(othersSelectedDate),'EEEE, MMMM d yyyy')}</span>
                 </div>
@@ -1356,7 +1373,7 @@ export default function Admin() {
                     return (
                       <button
                         key={d}
-                        onClick={() => setOthersSelectedDate(d)}
+                        onClick={() => { setOthersSelectedDate(d); setOthersSelectedMatch(null); loadOthersDatePredictions(d) }}
                         style={{
                           display:'flex',alignItems:'center',justifyContent:'space-between',
                           padding:'1rem 1.2rem',

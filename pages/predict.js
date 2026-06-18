@@ -312,12 +312,27 @@ export default function Predict() {
     setUser(session.user)
     userRef.current = session.user
 
-    const [profileRes, matchesRes, predsRes, allPredsRes] = await Promise.all([
+    const [profileRes, matchesRes, predsRes] = await Promise.all([
       supabase.from('profiles').select('*').eq('id', session.user.id).single(),
       supabase.from('matches').select('*').order('match_date').order('match_time'),
       supabase.from('predictions').select('*').eq('user_id', session.user.id),
-      supabase.from('predictions').select('match_id, predicted_result'),
     ])
+
+    // Paginate all predictions for consensus to bypass PostgREST db-max-rows (1000)
+    let allPredsRows = []
+    let from = 0
+    const pageSize = 999
+    while (true) {
+      const { data: chunk } = await supabase
+        .from('predictions')
+        .select('match_id, predicted_result')
+        .range(from, from + pageSize)
+      if (!chunk || chunk.length === 0) break
+      allPredsRows = allPredsRows.concat(chunk)
+      if (chunk.length < pageSize) break
+      from += pageSize
+    }
+    const allPredsRes = { data: allPredsRows }
 
     setProfile(profileRes.data)
     if (!profileRes.data) {
