@@ -231,7 +231,10 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ── Step 7: Write sync log ───────────────────────────────────────────────
+    // ── Step 7: Recalculate group standings from all completed matches ──────
+    await recalculateGroupStandings()
+
+    // ── Step 8: Write sync log ───────────────────────────────────────────────
     await writeLog(log.matched, log.updated, log.errors.length ? log.errors.join('; ') : null, source)
 
     return json({
@@ -282,6 +285,71 @@ async function resolveKnockoutProgression(
       console.log(`[sync-scores] Resolved knockout match ${fm.id}:`, updates)
     }
   }
+}
+
+// ─── Group standings recalculation ────────────────────────────────────────────
+
+async function recalculateGroupStandings() {
+  const { data: allMatches } = await supabase
+    .from('matches')
+    .select('group_name, team_a, team_b, stage, result, score_a, score_b')
+    .eq('stage', 'Group Stage')
+    .not('result', 'is', null)
+
+  const GROUP_TEAMS: Record<string, string[]> = {
+    A: ["Mexico", "South Korea", "Czechia", "South Africa"],
+    B: ["Switzerland", "Canada", "Qatar", "Bosnia and Herzegovina"],
+    C: ["Brazil", "Morocco", "Haiti", "Scotland"],
+    D: ["USA", "Turkey", "Australia", "Paraguay"],
+    E: ["Germany", "Ecuador", "Ivory Coast", "Curacao"],
+    F: ["Netherlands", "Japan", "Sweden", "Tunisia"],
+    G: ["Belgium", "Egypt", "Iran", "New Zealand"],
+    H: ["Spain", "Cape Verde", "Saudi Arabia", "Uruguay"],
+    I: ["France", "Senegal", "Iraq", "Norway"],
+    J: ["Argentina", "Algeria", "Austria", "Jordan"],
+    K: ["Portugal", "DR Congo", "Uzbekistan", "Colombia"],
+    L: ["England", "Croatia", "Ghana", "Panama"],
+  }
+
+  const standings: Record<string, Record<string, { played: number; won: number; drawn: number; lost: number; goals_for: number; goals_against: number; points: number }>> = {}
+  for (const [g, teams] of Object.entries(GROUP_TEAMS)) {
+    standings[g] = {}
+    for (const team of teams) standings[g][team] = { played: 0, won: 0, drawn: 0, lost: 0, goals_for: 0, goals_against: 0, points: 0 }
+  }
+
+  for (const m of (allMatches || [])) {
+    const g = m.group_name
+    if (!g || !standings[g]) continue
+    const tA = standings[g][m.team_a]
+    const tB = standings[g][m.team_b]
+    if (!tA || !tB) continue
+
+    tA.played++
+    tB.played++
+    tA.goals_for += m.score_a
+    tA.goals_against += m.score_b
+    tB.goals_for += m.score_b
+    tB.goals_against += m.score_a
+
+    if (m.result === 'teamA') { tA.won++; tA.points += 3; tB.lost++ }
+    else if (m.result === 'teamB') { tB.won++; tB.points += 3; tA.lost++ }
+    else { tA.drawn++; tA.points++; tB.drawn++; tB.points++ }
+  }
+
+  const rows: Array<Record<string, unknown>> = []
+  for (const [g, teams] of Object.entries(standings)) {
+    for (const [team, s] of Object.entries(teams)) {
+      rows.push({
+        group_name: g, team,
+        played: s.played, won: s.won, drawn: s.drawn, lost: s.lost,
+        goals_for: s.goals_for, goals_against: s.goals_against, points: s.points,
+        updated_at: new Date().toISOString(),
+      })
+    }
+  }
+
+  const { error } = await supabase.from('group_standings').upsert(rows, { onConflict: 'group_name,team' })
+  if (error) console.error('[sync-scores] Group standings upsert failed:', error.message)
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

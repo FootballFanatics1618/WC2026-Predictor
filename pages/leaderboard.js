@@ -35,7 +35,7 @@ export default function Leaderboard() {
 
   async function fetchTable() {
     const { data: profiles } = await supabase.from('profiles').select('id, username, first_name, last_name, golden_boot_pick, golden_boot_correct')
-    const { data: matches } = await supabase.from('matches').select('id, team_a, team_b, stage, result, score_a, score_b, match_date').order('match_date')
+    const { data: matches } = await supabase.from('matches').select('id, team_a, team_b, stage, result, score_a, score_b, match_date').order('match_date').order('match_time')
     if (!profiles) return
     setAllMatches(matches || [])
 
@@ -111,7 +111,7 @@ export default function Leaderboard() {
       if (p.user_id === myId) myPreds[p.match_id] = p
       if (p.user_id === oppId) oppPreds[p.match_id] = p
     })
-    const rows = completedMatches.map(m => ({
+    const rows = [...completedMatches].reverse().map(m => ({
       match: m,
       mine: myPreds[m.id],
       theirs: oppPreds[m.id],

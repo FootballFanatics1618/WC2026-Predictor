@@ -6,6 +6,7 @@ import FlagImg from '../components/FlagImg'
 import { supabase } from '../lib/supabase'
 import { ALL_PLAYERS } from '../lib/data'
 import { useDragScroll } from '../hooks/useDragScroll'
+import { recalculateGroupStandings } from '../lib/standings'
 import { toIST, getISTDate, matchISTDate, todayIST } from '../lib/flags'
 import { format, parseISO, formatDistanceToNow } from 'date-fns'
 
@@ -78,6 +79,8 @@ export default function Admin() {
   const [othersSelectedMatch, setOthersSelectedMatch] = useState(null)
   // Sync state
   const [syncing, setSyncing]       = useState(false)
+  const [recalculating, setRecalculating] = useState(false)
+  const [rescoring, setRescoring] = useState(false)
   const [syncLog, setSyncLog]       = useState([])
   const [syncLogLoading, setSyncLogLoading] = useState(false)
   const [lastSync, setLastSync]     = useState(null)
@@ -205,6 +208,64 @@ export default function Admin() {
     setSyncing(false)
   }
 
+  async function recalculateStandings() {
+    setMessage('')
+    setRecalculating(true)
+    try {
+      const { data: allMatches, error: fetchErr } = await supabase.from('matches').select('*').order('match_date').order('match_time')
+      if (fetchErr) throw new Error(fetchErr.message)
+      await recalculateGroupStandings(allMatches || [])
+      await loadStandings()
+      setMessage('✅ Group standings recalculated from all completed matches.')
+    } catch (e) {
+      console.error('Standings recalculation failed:', e.message)
+      setMessage(`❌ Standings recalculation failed: ${e.message}`)
+    }
+    setRecalculating(false)
+  }
+
+  async function rescoreMatch(match) {
+    if (!match.result && match.result !== 0) { alert('Match has no result to score against.'); return }
+    setSaving(s => ({ ...s, [match.id]: true }))
+    const { data: preds } = await supabase.from('predictions').select('*').eq('match_id', match.id)
+    let scoredCount = 0
+    for (const pred of (preds || [])) {
+      const rc = pred.predicted_result === match.result
+      const sc = rc && pred.predicted_score_a === match.score_a && pred.predicted_score_b === match.score_b
+      const { error: uErr } = await supabase.from('predictions').update({
+        is_result_correct: rc, is_score_correct: sc, points_earned: sc ? 5 : rc ? 3 : 0,
+      }).eq('id', pred.id)
+      if (!uErr) scoredCount++
+    }
+    setMessage(`🔄 Re-scored ${match.team_a} ${match.score_a}–${match.score_b} ${match.team_b}: ${scoredCount}/${preds?.length || 0} predictions updated.`)
+    setSaving(s => ({ ...s, [match.id]: false }))
+  }
+
+  async function rescoreAllMatches() {
+    if (!confirm('Re-score ALL completed matches? This will recalculate points for every prediction based on current match results.')) return
+    setRescoring(true)
+    setMessage('')
+    try {
+      const completedMatches = matches.filter(m => m.result !== null)
+      let totalScored = 0
+      for (const m of completedMatches) {
+        const { data: preds } = await supabase.from('predictions').select('*').eq('match_id', m.id)
+        for (const pred of (preds || [])) {
+          const rc = pred.predicted_result === m.result
+          const sc = rc && pred.predicted_score_a === m.score_a && pred.predicted_score_b === m.score_b
+          await supabase.from('predictions').update({
+            is_result_correct: rc, is_score_correct: sc, points_earned: sc ? 5 : rc ? 3 : 0,
+          }).eq('id', pred.id)
+          totalScored++
+        }
+      }
+      setMessage(`✅ Re-scored ${completedMatches.length} matches (${totalScored} predictions).`)
+    } catch (e) {
+      setMessage(`❌ Batch re-score failed: ${e.message}`)
+    }
+    setRescoring(false)
+  }
+
   function handleResultInput(matchId, field, value) {
     setResultForm(prev => ({ ...prev, [matchId]: { ...prev[matchId], [field]: value } }))
   }
@@ -252,17 +313,15 @@ export default function Admin() {
       if (!uErr) scoredCount++
     }
 
-    // ── 3. Update group standings ──────────────────────────────────────────────
+    // ── 3. Recalculate group standings from all completed matches ──────────────
     if (match.stage === 'Group Stage' && match.group_name) {
-      if (isEdit && match.result !== null) {
-        const sErr = await updateGroupStandings(
-          match, result, scoreA, scoreB,
-          match.result, match.score_a, match.score_b   // old values to reverse
-        )
-        if (sErr) console.error('Standings edit failed:', sErr)
-      } else {
-        const sErr = await updateGroupStandings(match, result, scoreA, scoreB)
-        if (sErr) console.error('Standings update failed:', sErr)
+      try {
+        const { data: freshMatches, error: fetchErr } = await supabase.from('matches').select('*').order('match_date').order('match_time')
+        if (fetchErr) throw new Error(fetchErr.message)
+        await recalculateGroupStandings(freshMatches || [])
+      } catch (e) {
+        console.error('Standings recalculation failed:', e.message)
+        setMessage(`⚠️ Result saved but standings update failed: ${e.message}`)
       }
     }
 
@@ -308,44 +367,10 @@ export default function Admin() {
       if (!uErr) resetCount++
     }
 
-    // 3. Reverse group standings (subtract old result only)
-    if (match.stage === 'Group Stage' && match.group_name && match.result) {
-      const g = match.group_name
-      const tA = match.team_a, tB = match.team_b
-      const r = match.result, sA = match.score_a, sB = match.score_b
-
-      const { data: rows } = await supabase
-        .from('group_standings')
-        .select('team,played,won,drawn,lost,goals_for,goals_against,points')
-        .eq('group_name', g).in('team', [tA, tB])
-
-      const rowA = rows?.find(x => x.team === tA)
-      const rowB = rows?.find(x => x.team === tB)
-
-      if (rowA) {
-        await supabase.from('group_standings').update({
-          played: rowA.played - 1,
-          goals_for: rowA.goals_for - sA,
-          goals_against: rowA.goals_against - sB,
-          won: rowA.won - (r === 'teamA' ? 1 : 0),
-          drawn: rowA.drawn - (r === 'draw' ? 1 : 0),
-          lost: rowA.lost - (r === 'teamB' ? 1 : 0),
-          points: rowA.points - (r === 'teamA' ? 3 : r === 'draw' ? 1 : 0),
-          updated_at: new Date().toISOString(),
-        }).eq('group_name', g).eq('team', tA)
-      }
-      if (rowB) {
-        await supabase.from('group_standings').update({
-          played: rowB.played - 1,
-          goals_for: rowB.goals_for - sB,
-          goals_against: rowB.goals_against - sA,
-          won: rowB.won - (r === 'teamB' ? 1 : 0),
-          drawn: rowB.drawn - (r === 'draw' ? 1 : 0),
-          lost: rowB.lost - (r === 'teamA' ? 1 : 0),
-          points: rowB.points - (r === 'teamB' ? 3 : r === 'draw' ? 1 : 0),
-          updated_at: new Date().toISOString(),
-        }).eq('group_name', g).eq('team', tB)
-      }
+    // 3. Recalculate group standings from remaining completed matches
+    if (match.stage === 'Group Stage' && match.group_name) {
+      const { data: freshMatches } = await supabase.from('matches').select('*').order('match_date').order('match_time')
+      await recalculateGroupStandings(freshMatches || [])
     }
 
     setMessage(`🔄 ${match.team_a} vs ${match.team_b} result reset. ${resetCount}/${preds?.length || 0} predictions cleared.`)
@@ -354,76 +379,7 @@ export default function Admin() {
     setShowCompleted(true)
   }
 
-  // oldResult/oldScoreA/oldScoreB: when editing, pass the previous values to reverse them first
-  async function updateGroupStandings(match, result, scoreA, scoreB, oldResult = null, oldScoreA = null, oldScoreB = null) {
-    const g = match.group_name
-    const tA = match.team_a
-    const tB = match.team_b
-
-    const { data: rows, error: fetchErr } = await supabase
-      .from('group_standings')
-      .select('team,played,won,drawn,lost,goals_for,goals_against,points')
-      .eq('group_name', g)
-      .in('team', [tA, tB])
-    if (fetchErr) return fetchErr.message
-
-    let rowA = rows?.find(r => r.team === tA) || { played:0,won:0,drawn:0,lost:0,goals_for:0,goals_against:0,points:0 }
-    let rowB = rows?.find(r => r.team === tB) || { played:0,won:0,drawn:0,lost:0,goals_for:0,goals_against:0,points:0 }
-
-    // If editing, reverse the old result first so we don't double-count
-    if (oldResult !== null && oldScoreA !== null && oldScoreB !== null) {
-      rowA = { ...rowA,
-        played: rowA.played - 1,
-        goals_for: rowA.goals_for - oldScoreA,
-        goals_against: rowA.goals_against - oldScoreB,
-        won:   rowA.won   - (oldResult === 'teamA' ? 1 : 0),
-        drawn: rowA.drawn - (oldResult === 'draw'  ? 1 : 0),
-        lost:  rowA.lost  - (oldResult === 'teamB' ? 1 : 0),
-        points: rowA.points - (oldResult === 'teamA' ? 3 : oldResult === 'draw' ? 1 : 0),
-      }
-      rowB = { ...rowB,
-        played: rowB.played - 1,
-        goals_for: rowB.goals_for - oldScoreB,
-        goals_against: rowB.goals_against - oldScoreA,
-        won:   rowB.won   - (oldResult === 'teamB' ? 1 : 0),
-        drawn: rowB.drawn - (oldResult === 'draw'  ? 1 : 0),
-        lost:  rowB.lost  - (oldResult === 'teamA' ? 1 : 0),
-        points: rowB.points - (oldResult === 'teamB' ? 3 : oldResult === 'draw' ? 1 : 0),
-      }
-    }
-
-    // Apply new result
-    const newA = {
-      played: rowA.played + 1,
-      goals_for: rowA.goals_for + scoreA,
-      goals_against: rowA.goals_against + scoreB,
-      won: rowA.won + (result === 'teamA' ? 1 : 0),
-      drawn: rowA.drawn + (result === 'draw' ? 1 : 0),
-      lost: rowA.lost + (result === 'teamB' ? 1 : 0),
-      points: rowA.points + (result === 'teamA' ? 3 : result === 'draw' ? 1 : 0),
-    }
-    const newB = {
-      played: rowB.played + 1,
-      goals_for: rowB.goals_for + scoreB,
-      goals_against: rowB.goals_against + scoreA,
-      won: rowB.won + (result === 'teamB' ? 1 : 0),
-      drawn: rowB.drawn + (result === 'draw' ? 1 : 0),
-      lost: rowB.lost + (result === 'teamA' ? 1 : 0),
-      points: rowB.points + (result === 'teamB' ? 3 : result === 'draw' ? 1 : 0),
-    }
-
-    const { error: errA } = await supabase
-      .from('group_standings')
-      .update({ ...newA, updated_at: new Date().toISOString() })
-      .eq('group_name', g).eq('team', tA)
-    if (errA) return errA.message
-
-    const { error: errB } = await supabase
-      .from('group_standings')
-      .update({ ...newB, updated_at: new Date().toISOString() })
-      .eq('group_name', g).eq('team', tB)
-    return errB ? errB.message : null
-  }
+  // updateGroupStandings removed — recalculateGroupStandings() from lib/standings.js is used instead
 
   async function resolveKnockoutProgression(completedMatch, result) {
     const winner = result === 'teamA' ? completedMatch.team_a : completedMatch.team_b
@@ -639,6 +595,22 @@ export default function Admin() {
                   style={{background:'rgba(255,255,255,0.06)',border:'1px solid rgba(255,255,255,0.12)',color:'var(--gray-300)'}}
                 >
                   {syncLogLoading ? 'Loading...' : 'Refresh Log'}
+                </button>
+                <button
+                  className="btn"
+                  onClick={recalculateStandings}
+                  disabled={recalculating}
+                  style={{background:'rgba(255,255,0,0.08)',border:'1px solid rgba(255,215,0,0.3)',color:'var(--gold)'}}
+                >
+                  {recalculating ? '⟳ Recalculating...' : '📊 Recalculate Standings'}
+                </button>
+                <button
+                  className="btn"
+                  onClick={rescoreAllMatches}
+                  disabled={rescoring}
+                  style={{background:'rgba(255,100,0,0.08)',border:'1px solid rgba(255,100,0,0.3)',color:'#ff8c00'}}
+                >
+                  {rescoring ? '⟳ Re-scoring...' : '⚡ Re-score All Matches'}
                 </button>
                 {lastSync && (
                   <span style={{fontSize:'0.8rem',color:'var(--gray-500)'}}>
@@ -1013,6 +985,14 @@ export default function Admin() {
                                     style={{fontSize:'0.72rem',padding:'0.2rem 0.5rem'}}
                                   >
                                     ✏️ Edit
+                                  </button>
+                                  <button
+                                    className="btn btn-ghost btn-sm"
+                                    disabled={saving[m.id]}
+                                    onClick={() => rescoreMatch(m)}
+                                    style={{fontSize:'0.72rem',padding:'0.2rem 0.5rem',color:'var(--gold,#f5c842)'}}
+                                  >
+                                    {saving[m.id] ? '...' : '⚡ Re-score'}
                                   </button>
                                   <button
                                     className="btn btn-ghost btn-sm"
