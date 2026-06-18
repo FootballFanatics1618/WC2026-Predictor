@@ -1084,7 +1084,6 @@ export default function Admin() {
                 </div>
                 {showStandings && (
                   <>
-                    {/* Legend */}
                     <div style={{display:'flex',gap:'1.25rem',marginBottom:'0.75rem',flexWrap:'wrap',fontSize:'0.72rem',color:'var(--gray-500)'}}>
                       <span><span style={{color:'#68d391',fontWeight:700}}>█</span> Qualify (Top 2)</span>
                       <span><span style={{color:'#f6ad55',fontWeight:700}}>█</span> Best 3rd (potential)</span>
@@ -1094,7 +1093,7 @@ export default function Admin() {
                       {groups.map(g => {
                         const rows = standingsByGroup[g] || []
                         const gamesPlayed = rows.reduce((s,r)=>s+r.played,0) / 2
-                        const totalGames = 6 // 4 teams × 3 matchdays / 2
+                        const totalGames = 6
                         return (
                           <div key={g} className="card" style={{padding:'1rem 0.85rem'}}>
                             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'0.6rem'}}>
@@ -1120,12 +1119,7 @@ export default function Admin() {
                                 <tbody>
                                   {rows.map((row, i) => {
                                     const gd = row.goals_for - row.goals_against
-                                    // Colour-code: green = qualified (top 2), amber = potential best 3rd, dim = eliminated
-                                    const qualBg = i < 2
-                                      ? 'rgba(104,211,145,0.08)'
-                                      : i === 2
-                                        ? 'rgba(246,173,85,0.06)'
-                                        : 'transparent'
+                                    const qualBg = i < 2 ? 'rgba(104,211,145,0.08)' : i === 2 ? 'rgba(246,173,85,0.06)' : 'transparent'
                                     const nameColor = i < 2 ? '#68d391' : i === 2 ? '#f6ad55' : 'var(--gray-500)'
                                     const qualBadge = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🟡' : '❌'
                                     return (

@@ -214,6 +214,184 @@ export default function Leaderboard() {
     )
   }
 
+  // ── Rank Progression Chart (moved to /race page) ──────────────────────────────
+  function RankProgressionChart() {
+    const [hoveredId, setHoveredId] = useState(null)
+    const completedMatches = allMatches.filter(m => m.result !== null && m.id !== 9999)
+    if (completedMatches.length < 1 || table.length < 2) return null
+
+    const playerCount = table.length
+    const n = completedMatches.length
+    const myId = profile?.id
+
+    // Generate visually distinct colors via evenly-spaced hues
+    function playerColor(i) {
+      const hue = Math.round((i * 360) / playerCount)
+      return `hsl(${hue},70%,62%)`
+    }
+
+    // Build cumulative pts, CS, CR per player after each match
+    const cumByPlayer = table.map((row, pi) => {
+      let pts = 0, cs = 0, cr = 0
+      const ptsArr = [0], csArr = [0], crArr = [0]
+      for (const m of completedMatches) {
+        const pred = allPredictions.find(p => p.user_id === row.id && p.match_id === m.id)
+        pts += pred?.points_earned || 0
+        cs  += pred?.is_score_correct  ? 1 : 0
+        cr  += pred?.is_result_correct ? 1 : 0
+        ptsArr.push(pts); csArr.push(cs); crArr.push(cr)
+      }
+      return { id: row.id, name: row.username, ptsArr, csArr, crArr, color: row.id === myId ? '#f5c842' : playerColor(pi) }
+    })
+
+    // At each step compute 0-based position with pts→CS→CR→name tiebreak
+    const series = cumByPlayer.map(player => {
+      const positions = []
+      for (let i = 0; i <= n; i++) {
+        const sorted = [...cumByPlayer].sort((a, b) => {
+          if (b.ptsArr[i] !== a.ptsArr[i]) return b.ptsArr[i] - a.ptsArr[i]
+          if (b.csArr[i]  !== a.csArr[i])  return b.csArr[i]  - a.csArr[i]
+          if (b.crArr[i]  !== a.crArr[i])  return b.crArr[i]  - a.crArr[i]
+          return a.name.localeCompare(b.name)
+        })
+        positions.push(sorted.findIndex(p => p.id === player.id))
+      }
+      return { ...player, positions, finalRank: positions[n] + 1, finalPts: player.ptsArr[n] }
+    })
+
+    const W = 580, H = Math.max(260, playerCount * 9 + 50)
+    const PAD = { top: 16, right: 16, bottom: 28, left: 32 }
+    const chartW = W - PAD.left - PAD.right
+    const chartH = H - PAD.top - PAD.bottom
+
+    function xPos(i) { return PAD.left + (i / n) * chartW }
+    function yPos(pos) { return PAD.top + (pos / (playerCount - 1)) * chartH }
+
+    const xStep = Math.ceil(n / 8)
+
+    // Sort legend by final rank
+    const legendSorted = [...series].sort((a, b) => a.finalRank - b.finalRank)
+
+    return (
+      <div className="card" style={{ marginTop: '1.5rem' }}>
+        <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.1rem', color: 'var(--gold)', marginBottom: '0.25rem', letterSpacing: '0.05em' }}>
+          RANK RACE
+        </div>
+        <p style={{ fontSize: '0.75rem', color: 'var(--gray-500)', marginBottom: '1rem' }}>
+          How each player's position has moved match by match · hover a dot to highlight
+        </p>
+
+        <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+          <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', minWidth: '320px', display: 'block' }}>
+
+            {/* Y axis rank labels — only show a few */}
+            {[1, Math.ceil(playerCount * 0.25), Math.ceil(playerCount * 0.5), Math.ceil(playerCount * 0.75), playerCount].map(rank => {
+              const y = yPos(rank - 1)
+              return (
+                <g key={rank}>
+                  <line x1={PAD.left} y1={y} x2={W - PAD.right} y2={y} stroke="rgba(255,255,255,0.05)" strokeWidth="1" strokeDasharray="3,4" />
+                  <text x={PAD.left - 4} y={y + 4} textAnchor="end" fontSize="8" fill="rgba(255,255,255,0.25)">#{rank}</text>
+                </g>
+              )
+            })}
+
+            {/* X axis match labels */}
+            {completedMatches.map((m, i) => {
+              if (i % xStep !== 0 && i !== n - 1) return null
+              return (
+                <text key={m.id} x={xPos(i + 1)} y={H - PAD.bottom + 13} textAnchor="middle" fontSize="8" fill="rgba(255,255,255,0.25)">
+                  M{i + 1}
+                </text>
+              )
+            })}
+
+            {/* Draw non-hovered lines first (background layer) */}
+            {series.filter(s => s.id !== hoveredId && s.id !== myId).map(s => (
+              <polyline key={s.id}
+                points={s.positions.map((pos, i) => `${xPos(i)},${yPos(pos)}`).join(' ')}
+                fill="none" stroke={s.color} strokeWidth="1" opacity="0.18"
+                strokeLinejoin="round" strokeLinecap="round"
+              />
+            ))}
+
+            {/* Draw dots for non-hovered, non-me players */}
+            {series.filter(s => s.id !== hoveredId && s.id !== myId).map(s =>
+              s.positions.map((pos, i) => (
+                <circle key={`${s.id}-${i}`}
+                  cx={xPos(i)} cy={yPos(pos)} r={i === n ? 4 : 2.5}
+                  fill={s.color} opacity="0.35"
+                  style={{ cursor: 'pointer' }}
+                  onMouseEnter={() => setHoveredId(s.id)}
+                  onMouseLeave={() => setHoveredId(null)}
+                />
+              ))
+            )}
+
+            {/* Highlighted player (hovered) */}
+            {hoveredId && hoveredId !== myId && (() => {
+              const s = series.find(p => p.id === hoveredId)
+              if (!s) return null
+              return (
+                <g>
+                  <polyline
+                    points={s.positions.map((pos, i) => `${xPos(i)},${yPos(pos)}`).join(' ')}
+                    fill="none" stroke={s.color} strokeWidth="2.5" opacity="1"
+                    strokeLinejoin="round" strokeLinecap="round"
+                  />
+                  {s.positions.map((pos, i) => (
+                    <circle key={i} cx={xPos(i)} cy={yPos(pos)} r={i === n ? 5 : 3.5} fill={s.color} opacity="1" />
+                  ))}
+                  {/* Name tooltip near last dot */}
+                  <rect x={xPos(n) - 60} y={yPos(s.positions[n]) - 22} width="120" height="18" rx="4" fill="rgba(15,15,20,0.92)" />
+                  <text x={xPos(n)} y={yPos(s.positions[n]) - 9} textAnchor="middle" fontSize="10" fill={s.color} fontWeight="700">{s.name}</text>
+                </g>
+              )
+            })()}
+
+            {/* Always-on: current user's line on top */}
+            {myId && (() => {
+              const s = series.find(p => p.id === myId)
+              if (!s) return null
+              return (
+                <g>
+                  <polyline
+                    points={s.positions.map((pos, i) => `${xPos(i)},${yPos(pos)}`).join(' ')}
+                    fill="none" stroke="#f5c842" strokeWidth="2.5" opacity="1"
+                    strokeLinejoin="round" strokeLinecap="round"
+                  />
+                  {s.positions.map((pos, i) => (
+                    <circle key={i} cx={xPos(i)} cy={yPos(pos)} r={i === n ? 6 : 3.5} fill="#f5c842" />
+                  ))}
+                  <rect x={xPos(n) - 50} y={yPos(s.positions[n]) - 22} width="100" height="18" rx="4" fill="rgba(15,15,20,0.92)" />
+                  <text x={xPos(n)} y={yPos(s.positions[n]) - 9} textAnchor="middle" fontSize="10" fill="#f5c842" fontWeight="700">{s.name} (you)</text>
+                </g>
+              )
+            })()}
+          </svg>
+        </div>
+
+        {/* Legend — 3 column grid sorted by final rank */}
+        <div style={{ marginTop: '1.25rem', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '1rem' }}>
+          <div style={{ fontSize: '0.7rem', color: 'var(--gray-600)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.6rem' }}>Final standings</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.3rem 0.75rem' }}>
+            {legendSorted.map(s => (
+              <div key={s.id}
+                style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', padding: '2px 0',
+                  color: s.id === myId ? '#f5c842' : s.id === hoveredId ? s.color : 'var(--gray-400)',
+                  fontWeight: s.id === myId ? 700 : 400, cursor: 'default' }}
+                onMouseEnter={() => setHoveredId(s.id)}
+                onMouseLeave={() => setHoveredId(null)}>
+                <span style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: s.color, flexShrink: 0 }} />
+                <span style={{ color: 'var(--gray-600)', minWidth: '20px' }}>#{s.finalRank}</span>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <>
       {h2h && <H2HPanel opponent={h2h} />}
@@ -339,6 +517,7 @@ export default function Leaderboard() {
           )}
           <div className="scroll-hint">← scroll →</div>
         </div>
+
       </div>
     </>
   )
