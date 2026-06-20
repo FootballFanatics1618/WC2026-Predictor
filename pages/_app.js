@@ -17,6 +17,7 @@ export default function App({ Component, pageProps }) {
   return (
     <>
       <Head>
+        <title>WC2026 | FF Predictor</title>
         <link rel="icon" href="/favicon.ico" />
         <link rel="shortcut icon" href="/favicon.ico" />
         <link rel="apple-touch-icon" href="/icon-192.png" />
