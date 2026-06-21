@@ -5,6 +5,7 @@ import Navbar from '../components/Navbar'
 import GoldenBootPicker from '../components/GoldenBootPicker'
 import { supabase } from '../lib/supabase'
 import { TOURNAMENT_START, PLAYER_TEAM_MAP } from '../lib/data'
+import { useServerTime } from '../hooks/useServerTime'
 
 export default function GoldenBootPage() {
   const router = useRouter()
@@ -15,8 +16,9 @@ export default function GoldenBootPage() {
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState('')
+  const { serverNow } = useServerTime()
 
-  const isLocked = new Date() >= TOURNAMENT_START
+  const isLocked = serverNow() >= TOURNAMENT_START
 
   useEffect(() => { init() }, [])
 

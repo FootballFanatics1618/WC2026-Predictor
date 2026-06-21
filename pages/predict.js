@@ -7,14 +7,15 @@ import { supabase } from '../lib/supabase'
 import { generateScorelines, TOURNAMENT_START } from '../lib/data'
 import { toIST, isISTToday, isISTPastDay, getISTDate } from '../lib/flags'
 import { isMatchPredictionLocked, timeUntilLock } from '../lib/locktime'
+import { useServerTime } from '../hooks/useServerTime'
 import { useDragScroll } from '../hooks/useDragScroll'
 import { format, parseISO } from 'date-fns'
 
 function isMatchCompleted(match) { return match.result !== null }
 
-function isPredLocked(match) {
+function isPredLocked(match, now) {
   if (isMatchCompleted(match)) return true
-  return isMatchPredictionLocked(match.match_date, match.match_time, match.kickoff_utc)
+  return isMatchPredictionLocked(match.match_date, match.match_time, match.kickoff_utc, now)
 }
 
 function isMatchLive(match) {
@@ -31,9 +32,9 @@ function getResultLabel(result, teamA, teamB) {
   return ''
 }
 
-function MatchCard({ match, saved, localPred, isEditing, isSaving, onResultChange, onScorelineChange, onSave, onEdit, penaltyWinner, onPenaltyWinnerChange, consensus }) {
+function MatchCard({ match, saved, localPred, isEditing, isSaving, onResultChange, onScorelineChange, onSave, onEdit, penaltyWinner, onPenaltyWinnerChange, consensus, now }) {
   const completed = isMatchCompleted(match)
-  const predLocked = isPredLocked(match)
+  const predLocked = isPredLocked(match, now)
   const live = isMatchLive(match)
   const pred = localPred || (saved ? { result: saved.predicted_result, scoreA: saved.predicted_score_a, scoreB: saved.predicted_score_b } : null)
   const isKnockout = match.stage !== 'Group Stage'
@@ -42,7 +43,7 @@ function MatchCard({ match, saved, localPred, isEditing, isSaving, onResultChang
   const currentScoreline = pred?.scoreA !== undefined && pred?.scoreB !== undefined ? `${pred.scoreA}-${pred.scoreB}` : ''
   const isCorrectResult = completed && saved && saved.is_result_correct
   const isCorrectScore = completed && saved && saved.is_score_correct
-  const lockCountdown = !predLocked ? timeUntilLock(match.match_date, match.match_time, match.kickoff_utc) : null
+  const lockCountdown = !predLocked ? timeUntilLock(match.match_date, match.match_time, match.kickoff_utc, now) : null
   const hasPrediction = !!saved
   const isLocked = predLocked || completed
   const dropdownsDisabled = isLocked || (hasPrediction && !isEditing)
@@ -232,7 +233,7 @@ export default function Predict() {
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
   const [selectedUpcomingDate, setSelectedUpcomingDate] = useState(null)
-  const [now, setNow] = useState(new Date())
+  const { serverNow } = useServerTime()
   const [penaltyWinners, setPenaltyWinners] = useState({})
   const [consensus, setConsensus] = useState({})
   const upcomingDateRef = useRef(null)
@@ -240,12 +241,6 @@ export default function Predict() {
   const userRef = useRef(null)
 
   useEffect(() => { upcomingDateRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' }) }, [selectedUpcomingDate])
-
-  // Tick every minute to re-evaluate locks
-  useEffect(() => {
-    const t = setInterval(() => setNow(new Date()), 60000)
-    return () => clearInterval(t)
-  }, [])
 
   // Real-time subscription: when admin saves a result, update the match immediately
   // so the prediction form locks without requiring a page refresh
@@ -429,7 +424,7 @@ export default function Predict() {
   }
 
   async function savePrediction(match) {
-    if (isPredLocked(match)) { alert('This match is locked for predictions.'); return }
+    if (isPredLocked(match, serverNow())) { alert('This match is locked for predictions.'); return }
     const pred = predictions[match.id]
     if (!pred?.result || pred.scoreA === '' || pred.scoreB === '') {
       alert('Please select both a result and scoreline.')
@@ -480,16 +475,16 @@ export default function Predict() {
 
   // Check if all matches on a date have predictions
   function dateFullyPredicted(matchList) {
-    return matchList.every(m => isPredLocked(m) || !!savedPredictions[m.id])
+    return matchList.every(m => isPredLocked(m, serverNow()) || !!savedPredictions[m.id])
   }
   function dateAllSaved(matchList) {
     // green tick only when every non-locked match has a save
-    const unlocked = matchList.filter(m => !isPredLocked(m) && !isMatchCompleted(m))
+    const unlocked = matchList.filter(m => !isPredLocked(m, serverNow()) && !isMatchCompleted(m))
     if (unlocked.length === 0) return false // nothing to predict
     return unlocked.every(m => !!savedPredictions[m.id])
   }
 
-  const isGbLocked = new Date() >= TOURNAMENT_START
+  const isGbLocked = serverNow() >= TOURNAMENT_START
 
   const totalPredictable = matches.filter(m => !isMatchCompleted(m) || savedPredictions[m.id]).length
   const totalPredicted = Object.keys(savedPredictions).length
@@ -596,6 +591,7 @@ export default function Predict() {
                     penaltyWinner={penaltyWinners[m.id]}
                     onPenaltyWinnerChange={handlePenaltyWinnerChange}
                     consensus={consensus[m.id]}
+                    now={serverNow()}
                   />
                 ))}
               </div>
@@ -661,6 +657,7 @@ export default function Predict() {
                         onEdit={handleEdit}
                         penaltyWinner={penaltyWinners[m.id]}
                         onPenaltyWinnerChange={handlePenaltyWinnerChange}
+                        now={serverNow()}
                       />
                     ))}
                   </div>
@@ -687,6 +684,7 @@ export default function Predict() {
                     penaltyWinner={penaltyWinners[m.id]}
                     onPenaltyWinnerChange={handlePenaltyWinnerChange}
                     consensus={consensus[m.id]}
+                    now={serverNow()}
                   />
                 ))}
               </div>

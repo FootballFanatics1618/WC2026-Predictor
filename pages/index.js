@@ -6,6 +6,7 @@ import FlagImg from '../components/FlagImg'
 import { supabase } from '../lib/supabase'
 import { ALL_PLAYERS } from '../lib/data'
 import { isGoldenBootLocked, GOLDEN_BOOT_LOCK } from '../lib/locktime'
+import { useServerTime } from '../hooks/useServerTime'
 
 export default function Home() {
   const [user, setUser] = useState(null)
@@ -16,6 +17,7 @@ export default function Home() {
   const [gbSaving, setGbSaving] = useState(false)
   const [gbMessage, setGbMessage] = useState('')
   const [gbLocked, setGbLocked] = useState(false)
+  const { serverNow } = useServerTime()
   const dropRef = useRef(null)
   const sortedPlayers = [...ALL_PLAYERS].sort()
 
@@ -24,9 +26,9 @@ export default function Home() {
       setUser(session?.user ?? null)
       if (session?.user) loadProfile(session.user.id)
     })
-    setGbLocked(isGoldenBootLocked())
+    setGbLocked(isGoldenBootLocked(serverNow()))
     // Check every minute if lock time has passed
-    const t = setInterval(() => setGbLocked(isGoldenBootLocked()), 60000)
+    const t = setInterval(() => setGbLocked(isGoldenBootLocked(serverNow())), 60000)
     return () => clearInterval(t)
   }, [])
 
