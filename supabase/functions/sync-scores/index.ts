@@ -78,6 +78,27 @@ function normalizeTeam(name: string): string {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+const MAX_RETRIES = 3
+const INITIAL_BACKOFF_MS = 1000
+
+async function fetchWithRetry(url: string, init?: RequestInit): Promise<Response> {
+  let lastErr: Error | null = null
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const res = await fetch(url, { ...init, signal: AbortSignal.timeout(15000) })
+      return res
+    } catch (err) {
+      lastErr = err instanceof Error ? err : new Error(String(err))
+      if (attempt < MAX_RETRIES) {
+        const delay = INITIAL_BACKOFF_MS * 2 ** (attempt - 1)
+        console.log(`[sync-scores] Fetch attempt ${attempt} failed, retrying in ${delay}ms…`)
+        await new Promise((r) => setTimeout(r, delay))
+      }
+    }
+  }
+  throw lastErr
+}
+
 function extractScore(m: ApiMatch): { home: number | null; away: number | null } {
   const home = m.home_score != null ? Number(m.home_score) : null
   const away = m.away_score != null ? Number(m.away_score) : null
@@ -134,15 +155,24 @@ Deno.serve(async (req) => {
     console.log(`[sync-scores] Found ${pendingMatches.length} unresolved past matches`)
 
     // ── Step 2: Fetch all matches from API ───────────────────────────────────
-    const apiRes = await fetch(`${API_BASE}/games`, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'application/json',
-      }
-    })
-    if (!apiRes.ok) throw new Error(`API error: ${apiRes.status}`)
-    const apiData = await apiRes.json()
-    const apiMatches: ApiMatch[] = apiData.games ?? []
+    let apiMatches: ApiMatch[] = []
+    try {
+      const apiRes = await fetchWithRetry(`${API_BASE}/games`, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'application/json',
+        }
+      })
+      if (!apiRes.ok) throw new Error(`API error: ${apiRes.status}`)
+      const apiData = await apiRes.json()
+      apiMatches = apiData.games ?? []
+    } catch (apiErr) {
+      const msg = apiErr instanceof Error ? apiErr.message : String(apiErr)
+      console.error('[sync-scores] API fetch failed:', msg)
+      log.errors.push(`API unavailable: ${msg}`)
+      await writeLog(log.matched, 0, log.errors.join('; '), source)
+      return json({ source, matchesChecked: log.matched, matchesUpdated: 0, errors: log.errors })
+    }
 
     // Build a lookup by normalised team-name pair: "teamA|teamB" → api match
     // The API uses different IDs than our DB, so we match by team names instead.

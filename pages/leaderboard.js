@@ -440,6 +440,13 @@ export default function Leaderboard() {
                 {myRow.goldenBootCorrect ? '🥇 ' : ''}{myRow.goldenBoot || '—'}
               </span>
             </div>
+
+            {/* Completed matches banner */}
+            {allMatches.length > 0 && (
+              <div style={{ marginTop: '0.75rem', padding: '0.35rem 0.85rem', background: 'rgba(255,255,255,0.03)', borderRadius: 'var(--radius)', textAlign: 'center', fontSize: '0.75rem', color: 'var(--gray-500)' }}>
+                {allMatches.filter(m => m.result !== null).length} / {allMatches.length} matches completed
+              </div>
+            )}
           </div>
         )}
 
