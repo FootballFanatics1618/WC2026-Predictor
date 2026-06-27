@@ -19,7 +19,7 @@ export default function Race() {
   const [allMatches, setAllMatches]   = useState([])
   const [loading, setLoading]         = useState(true)
   const [showCount, setShowCount]     = useState(10)
-  const [hoveredId, setHoveredId]     = useState(null)
+  const [selectedId, setSelectedId]   = useState(null)
   const [viewMode, setViewMode]       = useState('daily')
 
   useEffect(() => { init() }, [])
@@ -257,72 +257,52 @@ export default function Race() {
                   )
                 })}
 
-                {/* Background lines */}
-                {series.filter(s => s.id !== hoveredId && s.id !== myId).map(s => (
-                  <polyline key={`line-${s.id}`}
-                    points={s.positions.map((pos, i) => `${xPos(i)},${yPos(pos)}`).join(' ')}
-                    fill="none" stroke={s.color} strokeWidth="1.5" opacity="0.2"
-                    strokeLinejoin="round" strokeLinecap="round"
-                  />
-                ))}
+                {/* All lines */}
+                {series.map(s => {
+                  const activeId = selectedId ?? myId
+                  const isActive = s.id === activeId
+                  const color = s.id === myId ? '#f5c842' : s.color
+                  return (
+                    <polyline key={`line-${s.id}`}
+                      points={s.positions.map((pos, i) => `${xPos(i)},${yPos(pos)}`).join(' ')}
+                      fill="none" stroke={color} strokeWidth={isActive ? 2.5 : 1.5}
+                      opacity={isActive ? 1 : 0.1}
+                      strokeLinejoin="round" strokeLinecap="round"
+                    />
+                  )
+                })}
 
-                {/* Background dots */}
-                {series.filter(s => s.id !== hoveredId && s.id !== myId).map(s =>
-                  s.positions.map((pos, i) => (
+                {/* All dots */}
+                {series.map(s => {
+                  const activeId = selectedId ?? myId
+                  const isActive = s.id === activeId
+                  const color = s.id === myId ? '#f5c842' : s.color
+                  return s.positions.map((pos, i) => (
                     <circle key={`dot-${s.id}-${i}`}
                       cx={xPos(i)} cy={yPos(pos)}
-                      r={i === 0 || i === n ? 2.5 : 1.9}
-                      fill={s.color} opacity="0.3"
+                      r={isActive ? (i === 0 || i === n ? 3.5 : 2.8) : (i === 0 || i === n ? 2.5 : 1.9)}
+                      fill={color} opacity={isActive ? 1 : 0.1}
                       style={{ cursor: 'pointer' }}
-                      onMouseEnter={() => setHoveredId(s.id)}
-                      onMouseLeave={() => setHoveredId(null)}
+                      onClick={() => setSelectedId(p => p === s.id ? null : s.id)}
                     />
                   ))
-                )}
+                })}
 
-                {/* Hovered player */}
-                {hoveredId && hoveredId !== myId && (() => {
-                  const s = series.find(p => p.id === hoveredId)
+                {/* Active player label */}
+                {(() => {
+                  const activeId = selectedId ?? myId
+                  if (!activeId) return null
+                  const s = series.find(p => p.id === activeId)
                   if (!s) return null
-                  const lastPos = s.positions[n]
-                  const lx = xPos(n), ly = yPos(lastPos)
-                  const labelW = s.name.length * 5.8 + 12
-                  const clampedLx = Math.min(Math.max(lx, PAD.left + labelW / 2), W - PAD.right - labelW / 2)
-                  return (
-                    <g onMouseLeave={() => setHoveredId(null)}>
-                      <polyline
-                        points={s.positions.map((pos, i) => `${xPos(i)},${yPos(pos)}`).join(' ')}
-                        fill="none" stroke={s.color} strokeWidth="2" opacity="0.9"
-                        strokeLinejoin="round" strokeLinecap="round"
-                      />
-                      {s.positions.map((pos, i) => (
-                        <circle key={i} cx={xPos(i)} cy={yPos(pos)} r={i === 0 || i === n ? 3 : 2.5} fill={s.color} />
-                      ))}
-                      <rect x={clampedLx - labelW / 2} y={ly - 20} width={labelW} height={14} rx="3" fill="rgba(10,10,16,0.92)" />
-                      <text x={clampedLx} y={ly - 9} textAnchor="middle" fontSize="9" fill={s.color} fontWeight="600">{s.name}</text>
-                    </g>
-                  )
-                })()}
-
-                {/* Current user — always on top */}
-                {myId && (() => {
-                  const s = series.find(p => p.id === myId)
-                  if (!s) return null
+                  const color = s.id === myId ? '#f5c842' : s.color
+                  const nameLabel = s.id === myId ? `${s.name} (you)` : s.name
                   const lx = xPos(n), ly = yPos(s.positions[n])
-                  const labelW = (s.name + ' (you)').length * 5.8 + 12
+                  const labelW = nameLabel.length * 5.8 + 12
                   const clampedLx = Math.min(Math.max(lx, PAD.left + labelW / 2), W - PAD.right - labelW / 2)
                   return (
                     <g>
-                      <polyline
-                        points={s.positions.map((pos, i) => `${xPos(i)},${yPos(pos)}`).join(' ')}
-                        fill="none" stroke="#f5c842" strokeWidth="2.5" opacity="1"
-                        strokeLinejoin="round" strokeLinecap="round"
-                      />
-                      {s.positions.map((pos, i) => (
-                        <circle key={i} cx={xPos(i)} cy={yPos(pos)} r={i === 0 || i === n ? 3.5 : 2.8} fill="#f5c842" />
-                      ))}
                       <rect x={clampedLx - labelW / 2} y={ly - 20} width={labelW} height={14} rx="3" fill="rgba(10,10,16,0.92)" />
-                      <text x={clampedLx} y={ly - 9} textAnchor="middle" fontSize="9" fill="#f5c842" fontWeight="700">{s.name} (you)</text>
+                      <text x={clampedLx} y={ly - 9} textAnchor="middle" fontSize="9" fill={color} fontWeight="700">{nameLabel}</text>
                     </g>
                   )
                 })()}
@@ -332,25 +312,28 @@ export default function Race() {
             {/* Legend */}
             <div style={{ marginTop: '1.5rem', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '1rem' }}>
               <div style={{ fontSize: '0.7rem', color: 'var(--gray-600)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: '0.75rem' }}>
-                Final standings
+                Final standings — click a name to highlight
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 160px), 1fr))', gap: '0.35rem 0.75rem' }}>
                 {legendSorted.map(s => {
                   const isMe = s.id === myId
-                  const isHovered = s.id === hoveredId
+                  const activeId = selectedId ?? myId
+                  const isActive = s.id === activeId
+                  const color = isMe ? '#f5c842' : s.color
                   return (
                     <div key={s.id}
-                      style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '5px 8px', borderRadius: '6px', cursor: 'default',
-                        background: isHovered ? 'rgba(255,255,255,0.05)' : 'transparent',
-                        border: isMe ? '1px solid rgba(245,200,66,0.3)' : '1px solid transparent',
-                      }}
-                      onMouseEnter={() => setHoveredId(s.id)}
-                      onMouseLeave={() => setHoveredId(null)}>
-                      <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: s.color, flexShrink: 0 }} />
+                      onClick={() => setSelectedId(p => p === s.id ? null : s.id)}
+                      style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '5px 8px', borderRadius: '6px', cursor: 'pointer',
+                        background: isActive ? 'rgba(255,255,255,0.07)' : 'transparent',
+                        border: isActive ? `1px solid ${color}55` : '1px solid transparent',
+                        transition: 'all 0.15s',
+                      }}>
+                      <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: color, flexShrink: 0,
+                        boxShadow: isActive ? `0 0 5px ${color}` : 'none' }} />
                       <span style={{ fontSize: '0.72rem', color: 'var(--gray-600)', minWidth: '24px', fontWeight: 600 }}>#{s.finalRank}</span>
-                      <span style={{ fontSize: '0.8rem', color: isMe ? '#f5c842' : isHovered ? s.color : 'var(--gray-300)',
-                        fontWeight: isMe ? 700 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {s.name}
+                      <span style={{ fontSize: '0.8rem', color: isActive ? color : 'var(--gray-400)',
+                        fontWeight: isActive ? 700 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {s.name}{isMe ? ' (you)' : ''}
                       </span>
                       <span style={{ fontSize: '0.72rem', color: 'var(--gray-600)', marginLeft: 'auto', flexShrink: 0 }}>{s.finalPts}pts</span>
                     </div>
