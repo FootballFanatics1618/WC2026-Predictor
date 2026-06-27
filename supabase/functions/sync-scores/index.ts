@@ -44,6 +44,8 @@ interface ApiMatch {
   away_score: string | number
   home_team_name_en: string
   away_team_name_en: string
+  home_team_label?: string
+  away_team_label?: string
 }
 
 interface DbMatch {
@@ -74,6 +76,48 @@ const TEAM_NAME_ALIASES: Record<string, string> = {
 function normalizeTeam(name: string): string {
   const lower = name.toLowerCase().trim()
   return TEAM_NAME_ALIASES[lower] ?? lower
+}
+
+// Proper-cased DB names for all teams — maps normalised API name → DB name
+const GROUP_TEAMS_ALL: string[] = [
+  "Mexico","South Korea","Czechia","South Africa",
+  "Switzerland","Canada","Qatar","Bosnia and Herzegovina",
+  "Brazil","Morocco","Haiti","Scotland",
+  "USA","Turkey","Australia","Paraguay",
+  "Germany","Ecuador","Ivory Coast","Curacao",
+  "Netherlands","Japan","Sweden","Tunisia",
+  "Belgium","Egypt","Iran","New Zealand",
+  "Spain","Cape Verde","Saudi Arabia","Uruguay",
+  "France","Senegal","Iraq","Norway",
+  "Argentina","Algeria","Austria","Jordan",
+  "Portugal","DR Congo","Uzbekistan","Colombia",
+  "England","Croatia","Ghana","Panama",
+]
+const DB_TEAM_NAMES: Record<string, string> = {}
+for (const t of GROUP_TEAMS_ALL) DB_TEAM_NAMES[normalizeTeam(t)] = t
+
+function apiNameToDb(apiName: string): string {
+  return DB_TEAM_NAMES[normalizeTeam(apiName)] ?? apiName
+}
+
+function isPlaceholder(name: string): boolean {
+  if (!name) return true
+  return name.includes('Winner') || name.includes('Runner-up') || name.includes('Best 3rd') || name.includes('3rd Group')
+}
+
+// Normalise a label from either API or DB to a common form for comparison:
+// "Runner-up Group A" → "runner-up a"
+// "Runner-up A"       → "runner-up a"
+// "3rd Group A/B/C"  → "3rd a/b/c"
+// "Best 3rd (A/B/C)" → "3rd a/b/c"
+// "Winner Group E"   → "winner e"
+// "Winner E"         → "winner e"
+function normalizeLabel(s: string): string {
+  return s.toLowerCase()
+    .replace(/\bgroup\s+/g, '')  // remove "Group "
+    .replace(/\bbest\s+/g, '')   // remove "best " → "3rd ..."
+    .replace(/[()]/g, '')         // remove parentheses
+    .trim()
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -146,13 +190,9 @@ Deno.serve(async (req) => {
       .order('kickoff_utc')
 
     if (fetchErr) throw new Error(`DB fetch failed: ${fetchErr.message}`)
-    if (!pendingMatches || pendingMatches.length === 0) {
-      await writeLog(0, 0, null, source)
-      return json({ message: 'No pending matches to sync', source })
-    }
 
-    log.matched = pendingMatches.length
-    console.log(`[sync-scores] Found ${pendingMatches.length} unresolved past matches`)
+    log.matched = pendingMatches?.length ?? 0
+    if (log.matched > 0) console.log(`[sync-scores] Found ${log.matched} unresolved past matches`)
 
     // ── Step 2: Fetch all matches from API ───────────────────────────────────
     let apiMatches: ApiMatch[] = []
@@ -174,18 +214,49 @@ Deno.serve(async (req) => {
       return json({ source, matchesChecked: log.matched, matchesUpdated: 0, errors: log.errors })
     }
 
-    // Build a lookup by normalised team-name pair: "teamA|teamB" → api match
-    // The API uses different IDs than our DB, so we match by team names instead.
+    // Build lookups: by team-name pair AND by label pair (for placeholder resolution)
     const apiMap: Record<string, ApiMatch> = {}
+    const apiLabelMap: Record<string, ApiMatch> = {}
     for (const m of apiMatches) {
-      if (!m.home_team_name_en || !m.away_team_name_en) continue
-      const home = normalizeTeam(m.home_team_name_en)
-      const away = normalizeTeam(m.away_team_name_en)
-      apiMap[`${home}|${away}`] = m
+      if (m.home_team_name_en && m.away_team_name_en) {
+        const home = normalizeTeam(m.home_team_name_en)
+        const away = normalizeTeam(m.away_team_name_en)
+        apiMap[`${home}|${away}`] = m
+      }
+      if (m.home_team_label && m.away_team_label) {
+        const la = normalizeLabel(m.home_team_label)
+        const lb = normalizeLabel(m.away_team_label)
+        apiLabelMap[`${la}|${lb}`] = m
+      }
+    }
+
+    // ── Step 2b: Resolve placeholder team names in upcoming knockout matches ──
+    // Runs before score sync — uses API labels to resolve "Runner-up A" → real team
+    // without needing group stage to be complete or ID matching.
+    const { data: placeholderMatches } = await supabase
+      .from('matches')
+      .select('id, team_a, team_b')
+      .neq('stage', 'Group Stage')
+      .is('result', null)
+
+    for (const m of (placeholderMatches ?? [])) {
+      if (!isPlaceholder(m.team_a) && !isPlaceholder(m.team_b)) continue
+      const la = normalizeLabel(m.team_a)
+      const lb = normalizeLabel(m.team_b)
+      const apiM = apiLabelMap[`${la}|${lb}`]
+      if (!apiM) continue
+      // Resolve whichever side the API knows — keep unknown side as current placeholder
+      const resolvedA = (isPlaceholder(m.team_a) && apiM.home_team_name_en)
+        ? apiNameToDb(apiM.home_team_name_en) : m.team_a
+      const resolvedB = (isPlaceholder(m.team_b) && apiM.away_team_name_en)
+        ? apiNameToDb(apiM.away_team_name_en) : m.team_b
+      if (resolvedA === m.team_a && resolvedB === m.team_b) continue
+      await supabase.from('matches').update({ team_a: resolvedA, team_b: resolvedB }).eq('id', m.id)
+      console.log(`[sync-scores] Resolved match ${m.id}: ${resolvedA} vs ${resolvedB}`)
     }
 
     // ── Step 3: For each pending DB match, check if API says it's done ───────
-    for (const dbMatch of pendingMatches as DbMatch[]) {
+    for (const dbMatch of (pendingMatches ?? []) as DbMatch[]) {
       if (!dbMatch.team_a || !dbMatch.team_b) continue
       const keyAB = `${normalizeTeam(dbMatch.team_a)}|${normalizeTeam(dbMatch.team_b)}`
       const keyBA = `${normalizeTeam(dbMatch.team_b)}|${normalizeTeam(dbMatch.team_a)}`
