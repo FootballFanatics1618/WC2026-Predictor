@@ -35,10 +35,7 @@ export default function ScoringModal({ user }) {
   const sectionTitle = { fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--gold)', marginBottom: '0.5rem' }
   const pad = '0.5rem 0.6rem'
 
-  const grid2 = { display: 'grid', gridTemplateColumns: '1fr auto' }
-  const grid3 = { display: 'grid', gridTemplateColumns: 'auto 1fr auto' }
-
-  const th = { padding: pad, fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--gray-500)', borderBottom: '1px solid rgba(255,255,255,0.08)' }
+  const th = { padding: pad, fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--gray-500)' }
   const td = { padding: pad, fontSize: '0.8rem', color: 'var(--gray-400)', borderBottom: '1px solid rgba(255,255,255,0.04)', whiteSpace: 'nowrap' }
   const tdBold = { ...td, color: 'var(--white)', fontWeight: 600 }
   const tdPts = { ...td, fontWeight: 700, fontVariantNumeric: 'tabular-nums', textAlign: 'right' }
@@ -58,43 +55,43 @@ export default function ScoringModal({ user }) {
         {/* Group Stage */}
         <div style={{ marginTop: '1rem', background: 'rgba(255,255,255,0.04)', borderRadius: '8px', overflow: 'hidden' }}>
           <div style={{ ...sectionTitle, padding: pad }}>Group Stage (unchanged)</div>
-          <div style={{ ...grid2, borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-            <span style={th}>Prediction</span>
-            <span style={{ ...th, textAlign: 'right' }}>Points</span>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto' }}>
+            <span style={{ ...th, borderBottom: '1px solid rgba(255,255,255,0.08)' }}>Prediction</span>
+            <span style={{ ...th, textAlign: 'right', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>Points</span>
+            <span style={td}>Correct result</span><span style={{ ...tdPts, color: ptsColor('+3') }}>+3</span>
+            <span style={td}>Correct result + correct score</span><span style={{ ...tdPts, color: ptsColor('+5') }}>+5</span>
           </div>
-          <div style={grid2}><span style={td}>Correct result</span><span style={{ ...tdPts, color: ptsColor('+3') }}>+3</span></div>
-          <div style={{ ...grid2, borderBottom: '1px solid rgba(255,255,255,0.04)' }}><span style={td}>Correct result + correct score</span><span style={{ ...tdPts, color: ptsColor('+5') }}>+5</span></div>
         </div>
 
         {/* Knockout Draw (Pens) */}
         <div style={{ marginTop: '1rem', background: 'rgba(255,255,255,0.04)', borderRadius: '8px', overflow: 'hidden' }}>
           <div style={{ ...sectionTitle, padding: pad }}>Knockout — Draw (Penalties)</div>
-          <div style={{ ...grid3, borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-            <span style={th}>Prediction</span>
-            <span style={th}>Scenario</span>
-            <span style={{ ...th, textAlign: 'right' }}>Points</span>
+          <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto' }}>
+            <span style={{ ...th, borderBottom: '1px solid rgba(255,255,255,0.08)' }}>Prediction</span>
+            <span style={{ ...th, borderBottom: '1px solid rgba(255,255,255,0.08)' }}>Scenario</span>
+            <span style={{ ...th, textAlign: 'right', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>Points</span>
+            <span style={tdBold}>Draw</span><span style={td}>Correct result + correct score</span><span style={{ ...tdPts, color: ptsColor('+5') }}>+5</span>
+            <span style={tdBold}>Draw</span><span style={td}>Correct score, wrong result</span><span style={{ ...tdPts, color: ptsColor('+4') }}>+4</span>
+            <span style={tdBold}>Draw</span><span style={td}>Wrong score, correct result</span><span style={{ ...tdPts, color: ptsColor('+3') }}>+3</span>
+            <span style={tdBold}>Draw</span><span style={td}>Wrong score, wrong result</span><span style={{ ...tdPts, color: ptsColor('+2') }}>+2</span>
+            <span style={tdBold}>Outright</span><span style={td}>Correct result</span><span style={{ ...tdPts, color: ptsColor('+1') }}>+1</span>
+            <span style={tdBold}>Outright</span><span style={{ ...td, borderBottom: '1px solid rgba(255,255,255,0.04)' }}>Wrong result</span><span style={{ ...tdPts, borderBottom: '1px solid rgba(255,255,255,0.04)', color: ptsColor('0') }}>0</span>
           </div>
-          <div style={grid3}><span style={tdBold}>Draw</span><span style={td}>Correct result + correct score</span><span style={{ ...tdPts, color: ptsColor('+5') }}>+5</span></div>
-          <div style={grid3}><span style={tdBold}>Draw</span><span style={td}>Correct score, wrong result</span><span style={{ ...tdPts, color: ptsColor('+4') }}>+4</span></div>
-          <div style={grid3}><span style={tdBold}>Draw</span><span style={td}>Wrong score, correct result</span><span style={{ ...tdPts, color: ptsColor('+3') }}>+3</span></div>
-          <div style={grid3}><span style={tdBold}>Draw</span><span style={td}>Wrong score, wrong result</span><span style={{ ...tdPts, color: ptsColor('+2') }}>+2</span></div>
-          <div style={grid3}><span style={tdBold}>Outright</span><span style={td}>Correct result</span><span style={{ ...tdPts, color: ptsColor('+1') }}>+1</span></div>
-          <div style={{ ...grid3, borderBottom: '1px solid rgba(255,255,255,0.04)' }}><span style={tdBold}>Outright</span><span style={td}>Wrong result</span><span style={{ ...tdPts, color: ptsColor('0') }}>0</span></div>
         </div>
 
         {/* Knockout Outright */}
         <div style={{ marginTop: '1rem', background: 'rgba(255,255,255,0.04)', borderRadius: '8px', overflow: 'hidden' }}>
           <div style={{ ...sectionTitle, padding: pad }}>Knockout — Outright Win</div>
-          <div style={{ ...grid3, borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-            <span style={th}>Prediction</span>
-            <span style={th}>Scenario</span>
-            <span style={{ ...th, textAlign: 'right' }}>Points</span>
+          <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto' }}>
+            <span style={{ ...th, borderBottom: '1px solid rgba(255,255,255,0.08)' }}>Prediction</span>
+            <span style={{ ...th, borderBottom: '1px solid rgba(255,255,255,0.08)' }}>Scenario</span>
+            <span style={{ ...th, textAlign: 'right', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>Points</span>
+            <span style={tdBold}>Outright</span><span style={td}>Correct result + correct score</span><span style={{ ...tdPts, color: ptsColor('+5') }}>+5</span>
+            <span style={tdBold}>Outright</span><span style={td}>Correct result, wrong score</span><span style={{ ...tdPts, color: ptsColor('+3') }}>+3</span>
+            <span style={tdBold}>Outright</span><span style={td}>Wrong result</span><span style={{ ...tdPts, color: ptsColor('0') }}>0</span>
+            <span style={tdBold}>Draw</span><span style={td}>Correct result</span><span style={{ ...tdPts, color: ptsColor('+1') }}>+1</span>
+            <span style={tdBold}>Draw</span><span style={{ ...td, borderBottom: '1px solid rgba(255,255,255,0.04)' }}>Wrong result</span><span style={{ ...tdPts, borderBottom: '1px solid rgba(255,255,255,0.04)', color: ptsColor('0') }}>0</span>
           </div>
-          <div style={grid3}><span style={tdBold}>Outright</span><span style={td}>Correct result + correct score</span><span style={{ ...tdPts, color: ptsColor('+5') }}>+5</span></div>
-          <div style={grid3}><span style={tdBold}>Outright</span><span style={td}>Correct result, wrong score</span><span style={{ ...tdPts, color: ptsColor('+3') }}>+3</span></div>
-          <div style={grid3}><span style={tdBold}>Outright</span><span style={td}>Wrong result</span><span style={{ ...tdPts, color: ptsColor('0') }}>0</span></div>
-          <div style={grid3}><span style={tdBold}>Draw</span><span style={td}>Correct result</span><span style={{ ...tdPts, color: ptsColor('+1') }}>+1</span></div>
-          <div style={{ ...grid3, borderBottom: '1px solid rgba(255,255,255,0.04)' }}><span style={tdBold}>Draw</span><span style={td}>Wrong result</span><span style={{ ...tdPts, color: ptsColor('0') }}>0</span></div>
         </div>
 
         {/* Sticky footer */}
