@@ -42,32 +42,32 @@ export default function ScoringModal({ user }) {
         <div style={{ marginTop: '1rem', padding: '0.75rem', background: 'rgba(255,255,255,0.04)', borderRadius: '8px' }}>
           <div style={{ fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--gray-500)', marginBottom: '0.5rem' }}>Group Stage (unchanged)</div>
           <ScoringRow pts="+3" label="Correct result" />
-          <ScoringRow pts="+5" label="Correct result + exact score" />
+          <ScoringRow pts="+5" label="Correct result + correct score" />
         </div>
 
         {/* Knockout Draw (Pens) */}
         <div style={{ marginTop: '0.6rem', padding: '0.75rem', background: 'rgba(255,255,255,0.04)', borderRadius: '8px' }}>
           <div style={{ fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--gold)', marginBottom: '0.5rem' }}>Knockout — Draw (Penalties)</div>
           <div style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--gray-400)', marginBottom: '0.3rem' }}>If you predicted the DRAW:</div>
-          <ScoringRow pts="+5" label="Correct score + correct winner" />
-          <ScoringRow pts="+4" label="Correct score, wrong winner" />
-          <ScoringRow pts="+3" label="Wrong score, correct winner" />
-          <ScoringRow pts="+2" label="Wrong score, wrong winner" />
+          <ScoringRow pts="+5" label="Correct result + correct score" />
+          <ScoringRow pts="+4" label="Correct score, wrong result" />
+          <ScoringRow pts="+3" label="Wrong score, correct result" />
+          <ScoringRow pts="+2" label="Wrong score, wrong result" />
           <div style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--gray-400)', marginTop: '0.5rem', marginBottom: '0.3rem' }}>If you predicted OUTRIGHT:</div>
-          <ScoringRow pts="+1" label="Correct team advances" />
-          <ScoringRow pts="0" label="Wrong team" />
+          <ScoringRow pts="+1" label="Correct result" />
+          <ScoringRow pts="0" label="Wrong result" />
         </div>
 
         {/* Knockout Outright */}
         <div style={{ marginTop: '0.6rem', padding: '0.75rem', background: 'rgba(255,255,255,0.04)', borderRadius: '8px' }}>
           <div style={{ fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--gold)', marginBottom: '0.5rem' }}>Knockout — Outright Win</div>
           <div style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--gray-400)', marginBottom: '0.3rem' }}>If you predicted OUTRIGHT:</div>
-          <ScoringRow pts="+5" label="Correct team + exact score" />
-          <ScoringRow pts="+3" label="Correct team, wrong score" />
-          <ScoringRow pts="0" label="Wrong team" />
+          <ScoringRow pts="+5" label="Correct result + correct score" />
+          <ScoringRow pts="+3" label="Correct result, wrong score" />
+          <ScoringRow pts="0" label="Wrong result" />
           <div style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--gray-400)', marginTop: '0.5rem', marginBottom: '0.3rem' }}>If you predicted DRAW:</div>
-          <ScoringRow pts="+1" label="Correct advancing team" />
-          <ScoringRow pts="0" label="Wrong team" />
+          <ScoringRow pts="+1" label="Correct result" />
+          <ScoringRow pts="0" label="Wrong result" />
         </div>
 
         {/* Checkbox + Dismiss */}

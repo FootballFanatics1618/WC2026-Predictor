@@ -204,7 +204,7 @@ export default function Home() {
             <div className="card" style={{ textAlign: 'center' }}>
               <div style={{ fontSize: '1.75rem', marginBottom: '0.4rem' }}>⚡</div>
               <div style={{ fontWeight: 700, marginBottom: '0.2rem' }}>+5 pts</div>
-              <div style={{ fontSize: '0.82rem', color: 'var(--gray-500)' }}>Correct result + score</div>
+              <div style={{ fontSize: '0.82rem', color: 'var(--gray-500)' }}>Correct result + correct score</div>
             </div>
             <div className="card-gold" style={{ textAlign: 'center' }}>
               <div style={{ fontSize: '1.75rem', marginBottom: '0.4rem' }}>🥇</div>
@@ -216,17 +216,17 @@ export default function Home() {
             <div className="card" style={{ textAlign: 'center' }}>
               <div style={{ fontSize: '1.75rem', marginBottom: '0.4rem' }}>🔄</div>
               <div style={{ fontWeight: 700, marginBottom: '0.2rem' }}>+4 pts</div>
-              <div style={{ fontSize: '0.82rem', color: 'var(--gray-500)' }}>Draw: right score, wrong winner</div>
+              <div style={{ fontSize: '0.82rem', color: 'var(--gray-500)' }}>Correct score, wrong result</div>
             </div>
             <div className="card" style={{ textAlign: 'center' }}>
               <div style={{ fontSize: '1.75rem', marginBottom: '0.4rem' }}>🤝</div>
               <div style={{ fontWeight: 700, marginBottom: '0.2rem' }}>+2 pts</div>
-              <div style={{ fontSize: '0.82rem', color: 'var(--gray-500)' }}>Draw: right draw, wrong both</div>
+              <div style={{ fontSize: '0.82rem', color: 'var(--gray-500)' }}>Correct draw, wrong score & result</div>
             </div>
             <div className="card" style={{ textAlign: 'center' }}>
               <div style={{ fontSize: '1.75rem', marginBottom: '0.4rem' }}>✅</div>
               <div style={{ fontWeight: 700, marginBottom: '0.2rem' }}>+1 pt</div>
-              <div style={{ fontSize: '0.82rem', color: 'var(--gray-500)' }}>Knockout: right team only</div>
+              <div style={{ fontSize: '0.82rem', color: 'var(--gray-500)' }}>Knockout: correct result only</div>
             </div>
           </div>
         </div>
