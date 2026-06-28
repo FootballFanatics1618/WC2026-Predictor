@@ -98,7 +98,7 @@ export default function ScoringModal({ user }) {
         </div>
 
         {/* Sticky footer */}
-        <div style={{ position: 'sticky', bottom: 0, marginTop: '1.5rem', padding: '1rem 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(26,26,22,0.98)', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+        <div style={{ position: 'sticky', bottom: 0, marginTop: '1.5rem', padding: '1rem 1.25rem', marginLeft: '-1.25rem', marginRight: '-1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(26,26,22,1)', borderTop: '1px solid rgba(255,255,255,0.08)', zIndex: 10 }}>
           <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.85rem', color: 'var(--gray-400)', userSelect: 'none' }}>
             <input
               type="checkbox"
