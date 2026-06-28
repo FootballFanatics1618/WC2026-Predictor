@@ -32,11 +32,11 @@ export default function ScoringModal({ user }) {
 
   if (!visible) return null
 
-  const thStyle = { textAlign: 'left', padding: '0.4rem 0.6rem', fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--gray-500)', borderBottom: '1px solid rgba(255,255,255,0.08)' }
-  const tdLabel = { padding: '0.35rem 0.6rem', fontSize: '0.82rem', color: 'var(--gray-400)', borderBottom: '1px solid rgba(255,255,255,0.04)' }
-  const tdPts = { padding: '0.35rem 0.6rem', fontSize: '0.82rem', fontWeight: 700, textAlign: 'right', fontVariantNumeric: 'tabular-nums', borderBottom: '1px solid rgba(255,255,255,0.04)' }
+  const thStyle = { textAlign: 'left', padding: '0.5rem 0.75rem', fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--gray-500)', borderBottom: '1px solid rgba(255,255,255,0.08)' }
+  const tdLabel = { padding: '0.5rem 0.75rem', fontSize: '0.82rem', color: 'var(--gray-400)', borderBottom: '1px solid rgba(255,255,255,0.04)', whiteSpace: 'nowrap' }
+  const tdPts = { padding: '0.5rem 0.75rem', fontSize: '0.82rem', fontWeight: 700, textAlign: 'right', fontVariantNumeric: 'tabular-nums', borderBottom: '1px solid rgba(255,255,255,0.04)', whiteSpace: 'nowrap' }
   const sectionTitle = { fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--gold)', marginBottom: '0.5rem' }
-  const subHead = { fontSize: '0.75rem', fontWeight: 600, color: 'var(--gray-400)', padding: '0.3rem 0.6rem', background: 'rgba(255,255,255,0.03)' }
+  const subHead = { fontSize: '0.75rem', fontWeight: 600, color: 'var(--gray-400)', padding: '0.4rem 0.75rem', background: 'rgba(255,255,255,0.03)' }
 
   function ptsColor(pts) {
     if (pts === '0') return 'var(--gray-600)'
@@ -46,7 +46,7 @@ export default function ScoringModal({ user }) {
 
   return createPortal(
     <div className="nav-modal-backdrop" onClick={handleDismiss}>
-      <div className="nav-modal-card" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="scoring-title" style={{ maxWidth: '540px', maxHeight: '85vh', overflowY: 'auto' }}>
+      <div className="nav-modal-card" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="scoring-title" style={{ maxWidth: '560px', maxHeight: '85vh', overflowY: 'auto' }}>
         <div className="nav-modal-eyebrow">New scoring system</div>
         <h2 id="scoring-title" className="nav-modal-title">Knockout Predictions Just Got Smarter</h2>
 
@@ -63,7 +63,7 @@ export default function ScoringModal({ user }) {
         </div>
 
         {/* Knockout Draw (Pens) */}
-        <div style={{ marginTop: '0.6rem', background: 'rgba(255,255,255,0.04)', borderRadius: '8px', overflow: 'hidden' }}>
+        <div style={{ marginTop: '1rem', background: 'rgba(255,255,255,0.04)', borderRadius: '8px', overflow: 'hidden' }}>
           <div style={{ ...sectionTitle, padding: '0.5rem 0.75rem 0' }}>Knockout — Draw (Penalties)</div>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead><tr><th style={thStyle}>Prediction</th><th style={thStyle}>Scenario</th><th style={{ ...thStyle, textAlign: 'right' }}>Points</th></tr></thead>
@@ -81,7 +81,7 @@ export default function ScoringModal({ user }) {
         </div>
 
         {/* Knockout Outright */}
-        <div style={{ marginTop: '0.6rem', background: 'rgba(255,255,255,0.04)', borderRadius: '8px', overflow: 'hidden' }}>
+        <div style={{ marginTop: '1rem', background: 'rgba(255,255,255,0.04)', borderRadius: '8px', overflow: 'hidden' }}>
           <div style={{ ...sectionTitle, padding: '0.5rem 0.75rem 0' }}>Knockout — Outright Win</div>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead><tr><th style={thStyle}>Prediction</th><th style={thStyle}>Scenario</th><th style={{ ...thStyle, textAlign: 'right' }}>Points</th></tr></thead>
