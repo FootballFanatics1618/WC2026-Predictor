@@ -38,7 +38,7 @@ function MatchCard({ match, saved, localPred, isEditing, isSaving, onResultChang
   const predLocked = isPredLocked(match, now)
   const live = isMatchLive(match)
   const isKnockout = match.stage !== 'Group Stage'
-  const savedIsDrawET = saved && isKnockout && saved.predicted_score_a === saved.predicted_score_b
+  const savedIsDrawET = saved && isKnockout && (saved.predicted_is_draw === true || saved.predicted_score_a === saved.predicted_score_b)
   const predResult = localPred?.result || (savedIsDrawET ? 'draw_et' : saved?.predicted_result) || null
   const predScoreA = localPred?.scoreA ?? saved?.predicted_score_a
   const predScoreB = localPred?.scoreB ?? saved?.predicted_score_b
@@ -84,9 +84,12 @@ function MatchCard({ match, saved, localPred, isEditing, isSaving, onResultChang
           )}
           {completed && (
             <>
-              {isCorrectScore && <span className="points-chip points-5">+5 ⚡</span>}
-              {isCorrectResult && !isCorrectScore && <span className="points-chip points-3">+3 ✓</span>}
-              {!isCorrectResult && saved && <span className="points-chip points-0">0</span>}
+              {saved?.points_earned === 5 && <span className="points-chip points-5">+5 ⚡</span>}
+              {saved?.points_earned === 4 && <span className="points-chip points-4">+4</span>}
+              {saved?.points_earned === 3 && <span className="points-chip points-3">+3</span>}
+              {saved?.points_earned === 2 && <span className="points-chip points-2">+2</span>}
+              {saved?.points_earned === 1 && <span className="points-chip points-1">+1</span>}
+              {saved?.points_earned === 0 && <span className="points-chip points-0">0</span>}
             </>
           )}
           {predLocked && !completed && <span className="lock-chip">🔒 Locked</span>}
