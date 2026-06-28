@@ -3,6 +3,7 @@ import Link from 'next/link'
 import Image from 'next/image'
 import Navbar from '../components/Navbar'
 import FlagImg from '../components/FlagImg'
+import ScoringModal from '../components/ScoringModal'
 import { supabase } from '../lib/supabase'
 import { ALL_PLAYERS } from '../lib/data'
 import { isGoldenBootLocked, GOLDEN_BOOT_LOCK } from '../lib/locktime'
@@ -72,6 +73,7 @@ export default function Home() {
   return (
     <>
       <Navbar user={user} />
+      <ScoringModal user={user} />
       <div className="page" style={{ textAlign: 'center', paddingTop: '3rem' }}>
         <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '1.5rem' }}>
           <Image src="/ff-logo.jpg" alt="Football Fanatics" width={100} height={100}
@@ -192,21 +194,40 @@ export default function Home() {
         )}
 
         {/* Points explainer */}
-        <div className="grid-3" style={{ maxWidth: '700px', margin: '0 auto', padding: '0 1rem' }}>
-          <div className="card" style={{ textAlign: 'center' }}>
-            <div style={{ fontSize: '1.75rem', marginBottom: '0.4rem' }}>🎯</div>
-            <div style={{ fontWeight: 700, marginBottom: '0.2rem' }}>+3 pts</div>
-            <div style={{ fontSize: '0.82rem', color: 'var(--gray-500)' }}>Correct result</div>
+        <div style={{ maxWidth: '700px', margin: '0 auto', padding: '0 1rem' }}>
+          <div className="grid-3" style={{ marginBottom: '0.75rem' }}>
+            <div className="card" style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: '1.75rem', marginBottom: '0.4rem' }}>🎯</div>
+              <div style={{ fontWeight: 700, marginBottom: '0.2rem' }}>+3 pts</div>
+              <div style={{ fontSize: '0.82rem', color: 'var(--gray-500)' }}>Correct result</div>
+            </div>
+            <div className="card" style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: '1.75rem', marginBottom: '0.4rem' }}>⚡</div>
+              <div style={{ fontWeight: 700, marginBottom: '0.2rem' }}>+5 pts</div>
+              <div style={{ fontSize: '0.82rem', color: 'var(--gray-500)' }}>Correct result + score</div>
+            </div>
+            <div className="card-gold" style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: '1.75rem', marginBottom: '0.4rem' }}>🥇</div>
+              <div style={{ fontWeight: 700, marginBottom: '0.2rem', color: 'var(--gold)' }}>+10 pts</div>
+              <div style={{ fontSize: '0.82rem', color: 'var(--gray-500)' }}>Golden Boot</div>
+            </div>
           </div>
-          <div className="card" style={{ textAlign: 'center' }}>
-            <div style={{ fontSize: '1.75rem', marginBottom: '0.4rem' }}>⚡</div>
-            <div style={{ fontWeight: 700, marginBottom: '0.2rem' }}>+2 pts bonus</div>
-            <div style={{ fontSize: '0.82rem', color: 'var(--gray-500)' }}>Correct scoreline</div>
-          </div>
-          <div className="card-gold" style={{ textAlign: 'center' }}>
-            <div style={{ fontSize: '1.75rem', marginBottom: '0.4rem' }}>🥇</div>
-            <div style={{ fontWeight: 700, marginBottom: '0.2rem', color: 'var(--gold)' }}>+10 pts</div>
-            <div style={{ fontSize: '0.82rem', color: 'var(--gray-500)' }}>Golden Boot</div>
+          <div className="grid-3">
+            <div className="card" style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: '1.75rem', marginBottom: '0.4rem' }}>🔄</div>
+              <div style={{ fontWeight: 700, marginBottom: '0.2rem' }}>+4 pts</div>
+              <div style={{ fontSize: '0.82rem', color: 'var(--gray-500)' }}>Draw: right score, wrong winner</div>
+            </div>
+            <div className="card" style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: '1.75rem', marginBottom: '0.4rem' }}>🤝</div>
+              <div style={{ fontWeight: 700, marginBottom: '0.2rem' }}>+2 pts</div>
+              <div style={{ fontSize: '0.82rem', color: 'var(--gray-500)' }}>Draw: right draw, wrong both</div>
+            </div>
+            <div className="card" style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: '1.75rem', marginBottom: '0.4rem' }}>✅</div>
+              <div style={{ fontWeight: 700, marginBottom: '0.2rem' }}>+1 pt</div>
+              <div style={{ fontSize: '0.82rem', color: 'var(--gray-500)' }}>Knockout: right team only</div>
+            </div>
           </div>
         </div>
       </div>
