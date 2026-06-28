@@ -40,11 +40,11 @@ export default function ScoringModal({ user }) {
     return 'var(--white)'
   }
 
-  function Row({ cols, pts, children }) {
+  function Row({ pts, children }) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', padding: '0.45rem 0.6rem', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
         {children}
-        <span style={{ marginLeft: 'auto', flexShrink: 0, fontWeight: 700, fontSize: '0.8rem', fontVariantNumeric: 'tabular-nums', color: ptsColor(pts), whiteSpace: 'nowrap' }}>{pts}</span>
+        <span style={{ padding: '0.45rem 0.6rem', fontWeight: 700, fontSize: '0.8rem', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', color: ptsColor(pts), flex: '0 0 auto' }}>{pts}</span>
       </div>
     )
   }
