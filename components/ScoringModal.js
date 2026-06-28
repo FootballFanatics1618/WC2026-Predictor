@@ -32,42 +32,69 @@ export default function ScoringModal({ user }) {
 
   if (!visible) return null
 
+  const thStyle = { textAlign: 'left', padding: '0.4rem 0.6rem', fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--gray-500)', borderBottom: '1px solid rgba(255,255,255,0.08)' }
+  const tdLabel = { padding: '0.35rem 0.6rem', fontSize: '0.82rem', color: 'var(--gray-400)', borderBottom: '1px solid rgba(255,255,255,0.04)' }
+  const tdPts = { padding: '0.35rem 0.6rem', fontSize: '0.82rem', fontWeight: 700, textAlign: 'right', fontVariantNumeric: 'tabular-nums', borderBottom: '1px solid rgba(255,255,255,0.04)' }
+  const sectionTitle = { fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--gold)', marginBottom: '0.5rem' }
+  const subHead = { fontSize: '0.75rem', fontWeight: 600, color: 'var(--gray-400)', padding: '0.3rem 0.6rem', background: 'rgba(255,255,255,0.03)' }
+
+  function ptsColor(pts) {
+    if (pts === '0') return 'var(--gray-600)'
+    if (pts === '+5') return 'var(--gold)'
+    return 'var(--white)'
+  }
+
   return createPortal(
     <div className="nav-modal-backdrop" onClick={handleDismiss}>
-      <div className="nav-modal-card" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="scoring-title" style={{ maxWidth: '520px', maxHeight: '85vh', overflowY: 'auto' }}>
+      <div className="nav-modal-card" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="scoring-title" style={{ maxWidth: '540px', maxHeight: '85vh', overflowY: 'auto' }}>
         <div className="nav-modal-eyebrow">New scoring system</div>
         <h2 id="scoring-title" className="nav-modal-title">Knockout Predictions Just Got Smarter</h2>
 
         {/* Group Stage */}
-        <div style={{ marginTop: '1rem', padding: '0.75rem', background: 'rgba(255,255,255,0.04)', borderRadius: '8px' }}>
-          <div style={{ fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--gray-500)', marginBottom: '0.5rem' }}>Group Stage (unchanged)</div>
-          <ScoringRow pts="+3" label="Correct result" />
-          <ScoringRow pts="+5" label="Correct result + correct score" />
+        <div style={{ marginTop: '1rem', background: 'rgba(255,255,255,0.04)', borderRadius: '8px', overflow: 'hidden' }}>
+          <div style={{ ...sectionTitle, padding: '0.5rem 0.75rem 0' }}>Group Stage (unchanged)</div>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead><tr><th style={thStyle}>Prediction</th><th style={{ ...thStyle, textAlign: 'right' }}>Points</th></tr></thead>
+            <tbody>
+              <tr><td style={tdLabel}>Correct result</td><td style={{ ...tdPts, color: ptsColor('+3') }}>+3</td></tr>
+              <tr><td style={tdLabel}>Correct result + correct score</td><td style={{ ...tdPts, color: ptsColor('+5') }}>+5</td></tr>
+            </tbody>
+          </table>
         </div>
 
         {/* Knockout Draw (Pens) */}
-        <div style={{ marginTop: '0.6rem', padding: '0.75rem', background: 'rgba(255,255,255,0.04)', borderRadius: '8px' }}>
-          <div style={{ fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--gold)', marginBottom: '0.5rem' }}>Knockout — Draw (Penalties)</div>
-          <div style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--gray-400)', marginBottom: '0.3rem' }}>If you predicted the DRAW:</div>
-          <ScoringRow pts="+5" label="Correct result + correct score" />
-          <ScoringRow pts="+4" label="Correct score, wrong result" />
-          <ScoringRow pts="+3" label="Wrong score, correct result" />
-          <ScoringRow pts="+2" label="Wrong score, wrong result" />
-          <div style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--gray-400)', marginTop: '0.5rem', marginBottom: '0.3rem' }}>If you predicted OUTRIGHT:</div>
-          <ScoringRow pts="+1" label="Correct result" />
-          <ScoringRow pts="0" label="Wrong result" />
+        <div style={{ marginTop: '0.6rem', background: 'rgba(255,255,255,0.04)', borderRadius: '8px', overflow: 'hidden' }}>
+          <div style={{ ...sectionTitle, padding: '0.5rem 0.75rem 0' }}>Knockout — Draw (Penalties)</div>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead><tr><th style={thStyle}>Prediction</th><th style={thStyle}>Scenario</th><th style={{ ...thStyle, textAlign: 'right' }}>Points</th></tr></thead>
+            <tbody>
+              <tr><td style={{ ...subHead, borderRadius: 0 }} colSpan={3}>You predicted DRAW</td></tr>
+              <tr><td style={tdLabel}>Draw</td><td style={tdLabel}>Correct result + correct score</td><td style={{ ...tdPts, color: ptsColor('+5') }}>+5</td></tr>
+              <tr><td style={tdLabel}>Draw</td><td style={tdLabel}>Correct score, wrong result</td><td style={{ ...tdPts, color: ptsColor('+4') }}>+4</td></tr>
+              <tr><td style={tdLabel}>Draw</td><td style={tdLabel}>Wrong score, correct result</td><td style={{ ...tdPts, color: ptsColor('+3') }}>+3</td></tr>
+              <tr><td style={tdLabel}>Draw</td><td style={tdLabel}>Wrong score, wrong result</td><td style={{ ...tdPts, color: ptsColor('+2') }}>+2</td></tr>
+              <tr><td style={{ ...subHead, borderRadius: 0 }} colSpan={3}>You predicted OUTRIGHT</td></tr>
+              <tr><td style={tdLabel}>Outright</td><td style={tdLabel}>Correct result</td><td style={{ ...tdPts, color: ptsColor('+1') }}>+1</td></tr>
+              <tr><td style={tdLabel}>Outright</td><td style={tdLabel}>Wrong result</td><td style={{ ...tdPts, color: ptsColor('0') }}>0</td></tr>
+            </tbody>
+          </table>
         </div>
 
         {/* Knockout Outright */}
-        <div style={{ marginTop: '0.6rem', padding: '0.75rem', background: 'rgba(255,255,255,0.04)', borderRadius: '8px' }}>
-          <div style={{ fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--gold)', marginBottom: '0.5rem' }}>Knockout — Outright Win</div>
-          <div style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--gray-400)', marginBottom: '0.3rem' }}>If you predicted OUTRIGHT:</div>
-          <ScoringRow pts="+5" label="Correct result + correct score" />
-          <ScoringRow pts="+3" label="Correct result, wrong score" />
-          <ScoringRow pts="0" label="Wrong result" />
-          <div style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--gray-400)', marginTop: '0.5rem', marginBottom: '0.3rem' }}>If you predicted DRAW:</div>
-          <ScoringRow pts="+1" label="Correct result" />
-          <ScoringRow pts="0" label="Wrong result" />
+        <div style={{ marginTop: '0.6rem', background: 'rgba(255,255,255,0.04)', borderRadius: '8px', overflow: 'hidden' }}>
+          <div style={{ ...sectionTitle, padding: '0.5rem 0.75rem 0' }}>Knockout — Outright Win</div>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead><tr><th style={thStyle}>Prediction</th><th style={thStyle}>Scenario</th><th style={{ ...thStyle, textAlign: 'right' }}>Points</th></tr></thead>
+            <tbody>
+              <tr><td style={{ ...subHead, borderRadius: 0 }} colSpan={3}>You predicted OUTRIGHT</td></tr>
+              <tr><td style={tdLabel}>Outright</td><td style={tdLabel}>Correct result + correct score</td><td style={{ ...tdPts, color: ptsColor('+5') }}>+5</td></tr>
+              <tr><td style={tdLabel}>Outright</td><td style={tdLabel}>Correct result, wrong score</td><td style={{ ...tdPts, color: ptsColor('+3') }}>+3</td></tr>
+              <tr><td style={tdLabel}>Outright</td><td style={tdLabel}>Wrong result</td><td style={{ ...tdPts, color: ptsColor('0') }}>0</td></tr>
+              <tr><td style={{ ...subHead, borderRadius: 0 }} colSpan={3}>You predicted DRAW</td></tr>
+              <tr><td style={tdLabel}>Draw</td><td style={tdLabel}>Correct result</td><td style={{ ...tdPts, color: ptsColor('+1') }}>+1</td></tr>
+              <tr><td style={tdLabel}>Draw</td><td style={tdLabel}>Wrong result</td><td style={{ ...tdPts, color: ptsColor('0') }}>0</td></tr>
+            </tbody>
+          </table>
         </div>
 
         {/* Checkbox + Dismiss */}
@@ -93,15 +120,5 @@ export default function ScoringModal({ user }) {
       </div>
     </div>,
     document.body
-  )
-}
-
-function ScoringRow({ pts, label }) {
-  const color = pts === '0' ? 'var(--gray-600)' : pts === '+5' ? 'var(--gold)' : 'var(--white)'
-  return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.2rem 0', fontSize: '0.82rem' }}>
-      <span style={{ color: 'var(--gray-500)' }}>{label}</span>
-      <span style={{ fontWeight: 700, color, fontVariantNumeric: 'tabular-nums' }}>{pts} pts</span>
-    </div>
   )
 }
