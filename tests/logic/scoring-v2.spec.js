@@ -37,7 +37,11 @@ function scorePrediction(pred, match) {
   }
 
   if (predIsDraw) {
-    return { is_result_correct: false, is_score_correct: false, points_earned: 0 }
+    if (!isKnockout) {
+      return { is_result_correct: false, is_score_correct: false, points_earned: 0 }
+    }
+    const winnerCorrect = pred.predicted_result === match.result
+    return { is_result_correct: winnerCorrect, is_score_correct: false, points_earned: winnerCorrect ? 1 : 0 }
   }
 
   const rc = pred.predicted_result === match.result
@@ -243,18 +247,18 @@ test.describe('Section 5 — Edge Cases', () => {
 // Section 6 — Draw prediction on Outright match (bug fix)
 // ══════════════════════════════════════════════════════════════════════════════
 
-test.describe('Section 6 — Draw prediction on Outright match (bug fix)', () => {
+test.describe('Section 6 — Draw prediction on Outright match', () => {
 
-  test('6.1 — Predicted draw on outright win = 0pts (not 3)', () => {
+  test('6.1 — Predicted draw on outright KO, correct team = 1pt', () => {
     const pred  = { predicted_result: 'teamA', predicted_score_a: 2, predicted_score_b: 1, predicted_is_draw: true }
     const match = outrightMatch('teamA', 2, 1)
     const s = scorePrediction(pred, match)
-    expect(s.points_earned).toBe(0)
-    expect(s.is_result_correct).toBe(false)
+    expect(s.points_earned).toBe(1)
+    expect(s.is_result_correct).toBe(true)
     expect(s.is_score_correct).toBe(false)
   })
 
-  test('6.2 — Predicted draw on outright win, wrong team = 0pts', () => {
+  test('6.2 — Predicted draw on outright KO, wrong team = 0pts', () => {
     const pred  = { predicted_result: 'teamB', predicted_score_a: 2, predicted_score_b: 1, predicted_is_draw: true }
     const match = outrightMatch('teamA', 2, 1)
     const s = scorePrediction(pred, match)
@@ -263,7 +267,7 @@ test.describe('Section 6 — Draw prediction on Outright match (bug fix)', () =>
     expect(s.is_score_correct).toBe(false)
   })
 
-  test('6.3 — Predicted draw on group stage = 0pts (not 3)', () => {
+  test('6.3 — Predicted draw on group stage outright = 0pts', () => {
     const pred  = { predicted_result: 'teamA', predicted_score_a: 1, predicted_score_b: 1, predicted_is_draw: true }
     const match = groupMatch('teamA', 1, 1)
     const s = scorePrediction(pred, match)

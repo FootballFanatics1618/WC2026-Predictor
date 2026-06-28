@@ -131,7 +131,7 @@ function MatchCard({ match, saved, localPred, isEditing, isSaving, onResultChang
           {saved && (
             <div style={{ marginTop: '0.4rem', fontSize: '0.82rem', color: 'var(--gray-500)' }}>
               {savedIsDrawET
-                ? <>Draw {saved.predicted_score_a}–{saved.predicted_score_b} after ET · {getResultLabel(saved.predicted_result, match.team_a, match.team_b)} on penalties</>
+                ? <>Your pick: Draw {saved.predicted_score_a}–{saved.predicted_score_b} after ET · {getResultLabel(saved.predicted_result, match.team_a, match.team_b)} on penalties</>
                 : <>Your pick: {getResultLabel(saved.predicted_result, match.team_a, match.team_b)} {saved.predicted_score_a}–{saved.predicted_score_b}</>
               }
             </div>
