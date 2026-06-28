@@ -335,6 +335,9 @@ Deno.serve(async (req) => {
     // ── Step 7: Recalculate group standings from all completed matches ──────
     await recalculateGroupStandings()
 
+    // ── Step 7b: Progressively resolve R32 placeholders ────────────────────
+    await resolveGroupPlaceholders()
+
     // ── Step 8: Write sync log ───────────────────────────────────────────────
     await writeLog(log.matched, log.updated, log.errors.length ? log.errors.join('; ') : null, source)
 
@@ -451,6 +454,190 @@ async function recalculateGroupStandings() {
 
   const { error } = await supabase.from('group_standings').upsert(rows, { onConflict: 'group_name,team' })
   if (error) console.error('[sync-scores] Group standings upsert failed:', error.message)
+}
+
+// ─── Progressive placeholder resolution (synced version) ──────────────────────
+
+const GROUPS_LIST = ['A','B','C','D','E','F','G','H','I','J','K','L']
+
+// FIFA's predetermined assignment: which group's 3rd-place goes to which R32 match
+const BEST_3RD_GROUP_TO_MATCH: Record<string, number> = {
+  B: 82, D: 75, E: 79, F: 78, I: 81, J: 85, K: 80, L: 88,
+}
+const BEST_3RD_MATCH_IDS = new Set(Object.values(BEST_3RD_GROUP_TO_MATCH))
+// Match ID → original placeholder text (for resetting stale overwrites)
+const BEST_3RD_PLACEHOLDER: Record<number, string> = {
+  75: 'Best 3rd (A/B/C/D/F)',
+  78: 'Best 3rd (C/D/F/G/H)',
+  79: 'Best 3rd (C/E/F/H/I)',
+  80: 'Best 3rd (E/H/I/J/K)',
+  81: 'Best 3rd (A/E/H/I/J)',
+  82: 'Best 3rd (B/E/F/I/J)',
+  85: 'Best 3rd (E/F/G/I/J)',
+  88: 'Best 3rd (D/E/I/J/L)',
+}
+
+interface TeamStats {
+  played: number; won: number; drawn: number; lost: number;
+  goals_for: number; goals_against: number; points: number;
+}
+
+type GroupStandings = Record<string, Record<string, TeamStats>>
+
+async function resolveGroupPlaceholders() {
+  const { data: allMatches } = await supabase
+    .from('matches')
+    .select('*')
+
+  const groupMatches = (allMatches || []).filter((m: any) => m.stage === 'Group Stage' && m.result !== null)
+
+  const standings: GroupStandings = {}
+  for (const [g, teams] of Object.entries(GROUP_TEAMS)) {
+    standings[g] = {}
+    for (const team of teams) standings[g][team] = { played: 0, won: 0, drawn: 0, lost: 0, goals_for: 0, goals_against: 0, points: 0 }
+  }
+  for (const m of groupMatches) {
+    const g = m.group_name; if (!g || !standings[g]) continue
+    const tA = standings[g][m.team_a]; const tB = standings[g][m.team_b]
+    if (!tA || !tB) continue
+    tA.played++; tB.played++
+    tA.goals_for += m.score_a; tA.goals_against += m.score_b
+    tB.goals_for += m.score_b; tB.goals_against += m.score_a
+    if (m.result === 'teamA') { tA.won++; tA.points += 3; tB.lost++ }
+    else if (m.result === 'teamB') { tB.won++; tB.points += 3; tA.lost++ }
+    else { tA.drawn++; tA.points++; tB.drawn++; tB.points++ }
+  }
+
+  const clinch: Record<string, Record<string, string>> = {}
+  for (const g of GROUPS_LIST) {
+    clinch[g] = {}
+    const entries = GROUP_TEAMS[g].map(t => ({ team: t, ...standings[g][t], gd: standings[g][t].goals_for - standings[g][t].goals_against }))
+    const sorted = [...entries].sort((a, b) => {
+      if (b.points !== a.points) return b.points - a.points
+      if (b.gd !== a.gd) return b.gd - a.gd
+      if (b.goals_for !== a.goals_for) return b.goals_for - a.goals_for
+      return a.team.localeCompare(b.team)
+    })
+    for (const t of entries) {
+      if (t.played === 0 && t.points === 0) { clinch[g][t.team] = 'in_contention'; continue }
+      const maxT = t.points + 3 * (3 - t.played)
+      const canExceed = entries.filter(s => s.team !== t.team).map(s => s.points + 3 * (3 - s.played)).filter(mp => mp > t.points)
+      if (canExceed.length === 0) clinch[g][t.team] = 'clinched_1st'
+      else if (canExceed.length === 1) clinch[g][t.team] = 'clinched_top2'
+      else clinch[g][t.team] = 'in_contention'
+      const aheadOrEqual = entries.filter(s => s.team !== t.team).map(s => s.points + 3 * (3 - s.played)).filter(mp => mp >= maxT)
+      if (aheadOrEqual.length >= 2) clinch[g][t.team] = 'eliminated'
+    }
+  }
+
+  const slotMap: Record<string, string> = {}
+  const best3rds: Array<{ team: string; group: string; points: number; gd: number; gf: number; complete: boolean }> = []
+
+  for (const g of GROUPS_LIST) {
+    const teams = GROUP_TEAMS[g].map(t => ({ team: t, ...standings[g][t], gd: standings[g][t].goals_for - standings[g][t].goals_against, status: clinch[g]?.[t] ?? 'in_contention' }))
+    teams.sort((a, b) => {
+      if (b.points !== a.points) return b.points - a.points
+      if (b.gd !== a.gd) return b.gd - a.gd
+      if (b.goals_for !== a.goals_for) return b.goals_for - a.goals_for
+      return a.team.localeCompare(b.team)
+    })
+    if (teams[0] && teams[0].status === 'clinched_1st') slotMap[`Winner ${g}`] = teams[0].team
+    const ct = teams.filter(t => t.status === 'clinched_1st' || t.status === 'clinched_top2')
+    if (ct.length === 2 && teams[0]?.status === 'clinched_1st' && teams[1]?.status === 'clinched_top2') {
+      slotMap[`Winner ${g}`] = teams[0].team
+      slotMap[`Runner-up ${g}`] = teams[1].team
+    }
+    if (teams[2]) {
+      const allPlayed = GROUP_TEAMS[g].every(n => standings[g][n].played === 3)
+      best3rds.push({ team: teams[2].team, group: g, points: teams[2].points, gd: teams[2].gd, gf: teams[2].goals_for, complete: allPlayed })
+    }
+  }
+
+  const complete = best3rds.filter(t => t.complete).sort(compareThird)
+  const incomplete = best3rds.filter(t => !t.complete)
+  let resolvedThirds: typeof best3rds = []
+
+  const allComplete = best3rds.every(t => t.complete)
+  if (allComplete) {
+    resolvedThirds = [...best3rds].sort(compareThird).slice(0, 8)
+  } else {
+    const complete = best3rds.filter(t => t.complete).sort(compareThird)
+    const incomplete = best3rds.filter(t => !t.complete)
+    if (complete.length >= 8) {
+      const eighth = complete[7]
+      let locked = true
+      for (const t of incomplete) {
+        const team = standings[t.group]?.[t.team]
+        if (!team) continue
+        const allMaxes = GROUP_TEAMS[t.group].map(n => standings[t.group][n].points + 3 * (3 - standings[t.group][n].played))
+        allMaxes.sort((a, b) => b - a)
+        const best3rdPts = allMaxes[2]
+        if (best3rdPts >= eighth.points) { locked = false; break }
+      }
+      if (locked) resolvedThirds = complete.slice(0, 8)
+    }
+  }
+
+  // Reset best-3rd slots to original placeholder text, then assign via FIFA's predetermined table
+  const r32Matches = (allMatches || []).filter((m: any) => m.stage === 'Round of 32')
+  for (const m of r32Matches) {
+    const orig = BEST_3RD_PLACEHOLDER[m.id]
+    if (orig) m.team_b = orig
+  }
+
+  const updates: Array<Promise<any>> = []
+  for (const t of resolvedThirds) {
+    const tid = BEST_3RD_GROUP_TO_MATCH[t.group]
+    if (!tid) continue
+    const match = r32Matches.find((m: any) => m.id === tid)
+    if (!match || match.team_b === t.team) continue
+    updates.push(supabase.from('matches').update({ team_b: t.team }).eq('id', tid))
+  }
+
+  // Resolve Winner/Runner-up placeholders via slotMap for non-best-3rd matches
+  const bestCopy = [...resolvedThirds]
+  for (const m of r32Matches) {
+    if (BEST_3RD_MATCH_IDS.has(m.id)) continue
+    const upd: Record<string, string> = {}
+    const newA = resolveGroupSlot(m.team_a, slotMap, bestCopy)
+    const newB = resolveGroupSlot(m.team_b, slotMap, bestCopy)
+    if (newA && newA !== m.team_a) upd.team_a = newA
+    if (newB && newB !== m.team_b) upd.team_b = newB
+    if (Object.keys(upd).length > 0) updates.push(supabase.from('matches').update(upd).eq('id', m.id))
+  }
+
+  if (updates.length > 0) {
+    await Promise.all(updates)
+    console.log(`[sync-scores] Resolved ${updates.length} R32 placeholder(s)`)
+  }
+}
+
+// Compare two best-3rd-place teams by pts → GD → GF.
+// FIFA also uses disciplinary records and drawing of lots as deeper tiebreakers,
+// but we don't track card data. Returning 0 preserves insertion order (stable sort).
+function compareThird(a: { points: number; gd: number; gf: number; group: string }, b: { points: number; gd: number; gf: number; group: string }) {
+  if (b.points !== a.points) return b.points - a.points
+  if (b.gd !== a.gd) return b.gd - a.gd
+  if (b.gf !== a.gf) return b.gf - a.gf
+  return 0
+}
+
+function resolveGroupSlot(placeholder: string | null, slotMap: Record<string, string>, best3rds: Array<{ team: string; group: string }>): string | null {
+  if (!placeholder) return null
+  if (slotMap[placeholder]) return slotMap[placeholder]
+  if (placeholder.startsWith('Best 3rd')) {
+    const match = placeholder.match(/\(([^)]+)\)/)
+    if (match) {
+      const allowed = match[1].split('/').map(s => s.trim())
+      const idx = best3rds.findIndex(t => allowed.includes(t.group))
+      if (idx !== -1) {
+        const [pick] = best3rds.splice(idx, 1)
+        return pick.team
+      }
+    }
+    if (best3rds.length > 0) return best3rds.shift()!.team
+  }
+  return null
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

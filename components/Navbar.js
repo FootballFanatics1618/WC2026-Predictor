@@ -58,7 +58,7 @@ export default function Navbar({ user }) {
           {user ? (
             <>
               <Link href="/predict" className={navClass('/predict')}>Predict</Link>
-              <Link href="/groups" className={navClass('/groups')}>Groups</Link>
+              <Link href="/groups" className={navClass('/groups')}>Knockouts</Link>
               <Link href="/leaderboard" className={navClass('/leaderboard')}>Leaderboard</Link>
               <Link href="/race" className={navClass('/race')}>Rank Race</Link>
               <a href="https://footballfanatics1618.github.io/WC2026-Predictor/" target="_blank" rel="noopener noreferrer" className="nav-btn nav-btn-ghost" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>

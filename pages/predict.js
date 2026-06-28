@@ -36,9 +36,14 @@ function MatchCard({ match, saved, localPred, isEditing, isSaving, onResultChang
   const completed = isMatchCompleted(match)
   const predLocked = isPredLocked(match, now)
   const live = isMatchLive(match)
-  const pred = localPred || (saved ? { result: saved.predicted_result, scoreA: saved.predicted_score_a, scoreB: saved.predicted_score_b } : null)
   const isKnockout = match.stage !== 'Group Stage'
+  const savedIsDrawET = saved && isKnockout && saved.predicted_score_a === saved.predicted_score_b
+  const predResult = localPred?.result || (savedIsDrawET ? 'draw_et' : saved?.predicted_result) || null
+  const predScoreA = localPred?.scoreA ?? saved?.predicted_score_a
+  const predScoreB = localPred?.scoreB ?? saved?.predicted_score_b
+  const pred = predResult ? { result: predResult, scoreA: predScoreA, scoreB: predScoreB } : null
   const isDrawET = pred?.result === 'draw_et'
+  const effectivePenaltyWinner = penaltyWinner || (isDrawET && saved ? saved.predicted_result : '')
   const scorelines = pred?.result ? generateScorelines(pred.result) : []
   const currentScoreline = pred?.scoreA !== undefined && pred?.scoreB !== undefined ? `${pred.scoreA}-${pred.scoreB}` : ''
   const isCorrectResult = completed && saved && saved.is_result_correct
@@ -47,9 +52,6 @@ function MatchCard({ match, saved, localPred, isEditing, isSaving, onResultChang
   const hasPrediction = !!saved
   const isLocked = predLocked || completed
   const dropdownsDisabled = isLocked || (hasPrediction && !isEditing)
-
-  // For display: detect draw-after-ET prediction (knockout + equal scores)
-  const savedIsDrawET = completed && isKnockout && saved && saved.predicted_score_a === saved.predicted_score_b
 
   return (
     <div className={`match-card ${completed ? 'completed' : ''} ${hasPrediction && !completed ? 'predicted' : ''}`}
@@ -175,7 +177,7 @@ function MatchCard({ match, saved, localPred, isEditing, isSaving, onResultChang
           {isDrawET && (
             <div style={{ flex: '1 1 140px', minWidth: 0 }}>
               <label className="form-label">Penalty Winner</label>
-              <select className="form-select" value={penaltyWinner || ''} onChange={e => onPenaltyWinnerChange(match.id, e.target.value)} disabled={dropdownsDisabled}>
+              <select className="form-select" value={effectivePenaltyWinner} onChange={e => onPenaltyWinnerChange(match.id, e.target.value)} disabled={dropdownsDisabled}>
                 <option value="">— Winner —</option>
                 <option value="teamA">{match.team_a}</option>
                 <option value="teamB">{match.team_b}</option>
@@ -361,6 +363,15 @@ export default function Predict() {
     })
     setConsensus(consensusMap)
     setSavedPredictions(predsMap)
+
+    // Detect draw_et predictions and pre-populate penaltyWinners state
+    const penWinners = {}
+    allMatches.forEach(m => {
+      if (m.stage !== 'Group Stage' && predsMap[m.id] && predsMap[m.id].predicted_score_a === predsMap[m.id].predicted_score_b) {
+        penWinners[m.id] = predsMap[m.id].predicted_result
+      }
+    })
+    setPenaltyWinners(penWinners)
     setTab('upcoming')
     setLoading(false)
     if (router.query.welcome) setMessage("🎉 Welcome! Now predict today's matches!")

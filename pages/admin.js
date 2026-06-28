@@ -4,9 +4,9 @@ import Navbar from '../components/Navbar'
 import GoldenBootPicker from '../components/GoldenBootPicker'
 import FlagImg from '../components/FlagImg'
 import { supabase } from '../lib/supabase'
-import { ALL_PLAYERS } from '../lib/data'
+import { ALL_PLAYERS, MATCHES } from '../lib/data'
 import { useDragScroll } from '../hooks/useDragScroll'
-import { recalculateGroupStandings } from '../lib/standings'
+import { recalculateGroupStandings, resolveProgressivePlaceholders } from '../lib/standings'
 import { toIST, getISTDate, matchISTDate, todayIST } from '../lib/flags'
 import { format, parseISO, formatDistanceToNow } from 'date-fns'
 
@@ -31,13 +31,13 @@ const GROUP_TEAMS = {
   L:["England","Croatia","Ghana","Panama"],
 }
 
-function isPenaltyResult(result) {
-  return result === 'teamA_pen' || result === 'teamB_pen'
-}
-function baseResult(result) {
-  if (result === 'teamA_pen') return 'teamA'
-  if (result === 'teamB_pen') return 'teamB'
-  return result
+function resultLabel(match) {
+  if (!match.result) return ''
+  const isPen = match.won_on_penalties
+  if (match.result === 'draw') return 'Draw'
+  if (match.result === 'teamA') return isPen ? `${match.team_a} Win (penalties)` : `${match.team_a} Win`
+  if (match.result === 'teamB') return isPen ? `${match.team_b} Win (penalties)` : `${match.team_b} Win`
+  return ''
 }
 
 function sortStandings(rows) {
@@ -215,8 +215,9 @@ export default function Admin() {
       const { data: allMatches, error: fetchErr } = await supabase.from('matches').select('*').order('match_date').order('match_time')
       if (fetchErr) throw new Error(fetchErr.message)
       await recalculateGroupStandings(allMatches || [])
+      await resolveProgressivePlaceholders(allMatches || [])
       await loadStandings()
-      setMessage('✅ Group standings recalculated from all completed matches.')
+      setMessage('✅ Group standings recalculated and placeholders resolved.')
     } catch (e) {
       console.error('Standings recalculation failed:', e.message)
       setMessage(`❌ Standings recalculation failed: ${e.message}`)
@@ -281,14 +282,20 @@ export default function Admin() {
     const scoreA = parseInt(form.scoreA)
     const scoreB = parseInt(form.scoreB)
     const diff = scoreA - scoreB
-    const result = baseResult(form.result)
-    const wonOnPenalties = isPenaltyResult(form.result)
+    const rawResult = form.result
+    const penaltyWinner = form.penaltyWinner || ''
+    const wonOnPenalties = rawResult === 'draw' && !!penaltyWinner
+    const result = wonOnPenalties ? penaltyWinner : rawResult
 
-    // Score-vs-result consistency check (skip for penalties — score is level after ET)
-    if (!wonOnPenalties) {
-      if (result === 'teamA' && diff <= 0) { alert("Score doesn't match Team A win"); setSaving(s=>({...s,[match.id]:false})); return }
-      if (result === 'teamB' && diff >= 0) { alert("Score doesn't match Team B win"); setSaving(s=>({...s,[match.id]:false})); return }
-      if (result === 'draw' && diff !== 0) { alert("Score doesn't match Draw"); setSaving(s=>({...s,[match.id]:false})); return }
+    // Score-vs-result consistency check
+    if (rawResult === 'draw' && diff !== 0) {
+      alert("Draw requires level score"); setSaving(s=>({...s,[match.id]:false})); return
+    }
+    if (rawResult === 'teamA' && diff <= 0) {
+      alert("Score doesn't match Team A win"); setSaving(s=>({...s,[match.id]:false})); return
+    }
+    if (rawResult === 'teamB' && diff >= 0) {
+      alert("Score doesn't match Team B win"); setSaving(s=>({...s,[match.id]:false})); return
     }
 
     // ── 1. Save result to match row ──────────────────────────────────────────
@@ -325,22 +332,27 @@ export default function Admin() {
       }
     }
 
-    // ── 4. Knockout progression (only for new saves, not edits) ────────────────
-    if (!isEdit && match.stage !== 'Group Stage') {
+    // ── 4. Knockout progression ────────────────────────────────────────────
+    if (match.stage !== 'Group Stage') {
       await resolveKnockoutProgression(match, result)
     }
 
-    // ── 5. After all 72 group games, propagate winners to R32 ───────────────
-    if (!isEdit && match.stage === 'Group Stage') {
-      const { data: freshMatches } = await supabase.from('matches').select('*').order('match_date').order('match_time')
-      const groupDone = (freshMatches || []).filter(m => m.stage === 'Group Stage' && m.result !== null).length
-      if (groupDone === 72) await propagateAllGroupWinners(freshMatches || [])
+    // ── 5. Progressively resolve R32 placeholders ──────────────────────────
+    if (match.stage === 'Group Stage') {
+      try {
+        const { data: freshMatches } = await supabase.from('matches').select('*').order('match_date').order('match_time')
+        if (freshMatches) await resolveProgressivePlaceholders(freshMatches)
+      } catch (e) {
+        console.error('Placeholder resolution failed:', e.message)
+      }
     }
+
 
     setMessage(`✅ ${match.team_a} ${scoreA}–${scoreB} ${match.team_b}${wonOnPenalties ? ' (penalties)' : ''} ${isEdit ? 'updated' : 'saved'}! ${scoredCount}/${preds?.length || 0} predictions scored.`)
     await Promise.all([loadMatches(), loadStandings()])
     setSaving(s => ({ ...s, [match.id]: false }))
     setShowCompleted(true)
+    setResultForm(prev => { const n = { ...prev }; delete n[match.id]; return n })
   }
 
   async function resetResult(match) {
@@ -371,6 +383,27 @@ export default function Admin() {
     if (match.stage === 'Group Stage' && match.group_name) {
       const { data: freshMatches } = await supabase.from('matches').select('*').order('match_date').order('match_time')
       await recalculateGroupStandings(freshMatches || [])
+      await resolveProgressivePlaceholders(freshMatches || [])
+    }
+
+    // 4. Revert downstream knockout placeholders
+    if (match.stage !== 'Group Stage') {
+      const { data: downstream } = await supabase.from('matches').select('*')
+        .or(`team_a.ilike.%M${match.id}%,team_b.ilike.%M${match.id}%`)
+      for (const dm of (downstream || [])) {
+        const orig = MATCHES.find(m => m.id === dm.id)
+        if (!orig) continue
+        const upd = {}
+        if (dm.team_a && dm.team_a.includes(`M${match.id}`) && dm.team_a !== orig.teamA) {
+          upd.team_a = orig.teamA
+        }
+        if (dm.team_b && dm.team_b.includes(`M${match.id}`) && dm.team_b !== orig.teamB) {
+          upd.team_b = orig.teamB
+        }
+        if (Object.keys(upd).length > 0) {
+          await supabase.from('matches').update(upd).eq('id', dm.id)
+        }
+      }
     }
 
     setMessage(`🔄 ${match.team_a} vs ${match.team_b} result reset. ${resetCount}/${preds?.length || 0} predictions cleared.`)
@@ -397,74 +430,8 @@ export default function Admin() {
     }
   }
 
-  async function propagateAllGroupWinners(allMatches) {
-    const groups = Object.keys(GROUP_TEAMS)
-    const { data: standingRows } = await supabase.from('group_standings').select('*')
-
-    const groupSorted = {}
-    for (const g of groups) {
-      const rows = (standingRows || []).filter(r => r.group_name === g)
-      groupSorted[g] = sortStandings(rows)
-    }
-
-    const thirds = groups.map(g => {
-      const t = groupSorted[g][2]
-      if (!t) return null
-      return { team: t.team, group: g, points: t.points, gd: t.goals_for - t.goals_against, gf: t.goals_for }
-    }).filter(Boolean)
-
-    thirds.sort((a,b) => {
-      if (b.points !== a.points) return b.points - a.points
-      if (b.gd !== a.gd) return b.gd - a.gd
-      if (b.gf !== a.gf) return b.gf - a.gf
-      return a.group.localeCompare(b.group)
-    })
-
-    const slotMap = {}
-    for (const g of groups) {
-      slotMap[`Winner ${g}`] = groupSorted[g][0]?.team
-      slotMap[`Runner-up ${g}`] = groupSorted[g][1]?.team
-    }
-
-    const best3rds = [...thirds]
-
-    const r32 = allMatches.filter(m => m.stage === 'Round of 32' && m.result === null)
-    for (const m of r32) {
-      const upd = {}
-      const newA = resolveGroupSlot(m.team_a, slotMap, best3rds)
-      const newB = resolveGroupSlot(m.team_b, slotMap, best3rds)
-      if (newA) upd.team_a = newA
-      if (newB) upd.team_b = newB
-      if (Object.keys(upd).length > 0) await supabase.from('matches').update(upd).eq('id', m.id)
-    }
-  }
-
-  // Resolve a group-stage placeholder like "Winner A", "Runner-up B",
-  // "Best 3rd (A/B/C/D/F)" to an actual team name.
-  // best3rds is a ranked array of { team, group, points, gd, gf } (best first).
-  // We consume entries from it as we assign slots — pass a copy per call or
-  // manage the array externally.
-  function resolveGroupSlot(placeholder, slotMap, best3rds) {
-    if (!placeholder) return null
-    // Direct slot lookup: "Winner A", "Runner-up B"
-    if (slotMap[placeholder]) return slotMap[placeholder]
-    // Best 3rd: "Best 3rd (A/B/C/D/F)" — pick the highest-ranked 3rd-place team
-    // whose group is in the allowed list.
-    if (placeholder.startsWith('Best 3rd')) {
-      const m = placeholder.match(/\(([^)]+)\)/)
-      if (m) {
-        const allowed = m[1].split('/').map(s => s.trim())
-        const idx = best3rds.findIndex(t => allowed.includes(t.group))
-        if (idx !== -1) {
-          const [pick] = best3rds.splice(idx, 1)
-          return pick.team
-        }
-      }
-      // Fallback: take the best available 3rd regardless of group
-      if (best3rds.length > 0) return best3rds.shift().team
-    }
-    return null
-  }
+  // propagateAllGroupWinners + resolveGroupSlot removed — replaced by
+  // resolveProgressivePlaceholders() from lib/standings.js (called after every group match result)
 
   async function awardGoldenBoot() {
     if (!gbPick.trim()) { alert('Search and select a player first.'); return }
@@ -865,50 +832,66 @@ export default function Admin() {
 
                     {/* Score entry */}
                     {bothKnown && (
-                      <div style={{display:'flex',alignItems:'center',gap:'0.6rem',flexWrap:'wrap'}}>
-                        <select
-                          className="form-select"
-                          style={{flex:'1 1 160px',minWidth:'140px'}}
-                          value={form.result||''}
-                          onMouseDown={preserveScroll}
-                          onChange={e=>handleResultInput(match.id,'result',e.target.value)}
-                        >
-                          <option value="">— Result —</option>
-                          <option value="teamA">{match.team_a} Win</option>
-                          {match.stage === 'Group Stage' && <option value="draw">Draw</option>}
-                          <option value="teamB">{match.team_b} Win</option>
-                          {match.stage !== 'Group Stage' && <option value="teamA_pen">{match.team_a} Win (penalties)</option>}
-                          {match.stage !== 'Group Stage' && <option value="teamB_pen">{match.team_b} Win (penalties)</option>}
-                        </select>
+                      <div style={{display:'flex',flexDirection:'column',gap:'0.5rem'}}>
+                        <div style={{display:'flex',alignItems:'center',gap:'0.6rem',flexWrap:'wrap'}}>
+                          <select
+                            className="form-select"
+                            style={{flex:'1 1 160px',minWidth:'140px'}}
+                            value={form.result||''}
+                            onMouseDown={preserveScroll}
+                            onChange={e=>handleResultInput(match.id,'result',e.target.value)}
+                          >
+                            <option value="">— Result —</option>
+                            <option value="teamA">{match.team_a} Win</option>
+                            <option value="draw">Draw</option>
+                            <option value="teamB">{match.team_b} Win</option>
+                          </select>
 
-                        <div style={{display:'flex',alignItems:'center',gap:'0.4rem'}}>
-                          <input
-                            className="form-input"
-                            style={{width:'64px',textAlign:'center'}}
-                            type="number" min="0"
-                            placeholder="A"
-                            value={form.scoreA??''}
-                            onChange={e=>handleResultInput(match.id,'scoreA',e.target.value)}
-                          />
-                          <span style={{color:'var(--gray-500)',fontWeight:700}}>–</span>
-                          <input
-                            className="form-input"
-                            style={{width:'64px',textAlign:'center'}}
-                            type="number" min="0"
-                            placeholder="B"
-                            value={form.scoreB??''}
-                            onChange={e=>handleResultInput(match.id,'scoreB',e.target.value)}
-                          />
+                          <div style={{display:'flex',alignItems:'center',gap:'0.3rem'}}>
+                            <input
+                              className="form-input"
+                              style={{width:'60px',textAlign:'center'}}
+                              type="number" min="0"
+                              placeholder={match.team_a}
+                              value={form.scoreA??''}
+                              onChange={e=>handleResultInput(match.id,'scoreA',e.target.value)}
+                            />
+                            <span style={{color:'var(--gray-500)',fontWeight:700}}>–</span>
+                            <input
+                              className="form-input"
+                              style={{width:'60px',textAlign:'center'}}
+                              type="number" min="0"
+                              placeholder={match.team_b}
+                              value={form.scoreB??''}
+                              onChange={e=>handleResultInput(match.id,'scoreB',e.target.value)}
+                            />
+                          </div>
+
+                          <button
+                            className="btn btn-primary btn-sm"
+                            onClick={()=>saveResult(match)}
+                            disabled={saving[match.id]}
+                            style={{minWidth:'70px'}}
+                          >
+                            {saving[match.id] ? '...' : '✓ Save'}
+                          </button>
                         </div>
 
-                        <button
-                          className="btn btn-primary btn-sm"
-                          onClick={()=>saveResult(match)}
-                          disabled={saving[match.id]}
-                          style={{minWidth:'70px'}}
-                        >
-                          {saving[match.id] ? '...' : '✓ Save'}
-                        </button>
+                        {form.result === 'draw' && (
+                          <div style={{display:'flex',alignItems:'center',gap:'0.5rem',paddingLeft:'0.2rem'}}>
+                            <span style={{fontSize:'0.78rem',color:'var(--gray-400)',whiteSpace:'nowrap'}}>Penalty winner:</span>
+                            <select
+                              className="form-select"
+                              style={{flex:'1 1 200px',minWidth:'160px'}}
+                              value={form.penaltyWinner||''}
+                              onChange={e=>handleResultInput(match.id,'penaltyWinner',e.target.value)}
+                            >
+                              <option value="">— No penalties —</option>
+                              <option value="teamA">{match.team_a} won on penalties</option>
+                              <option value="teamB">{match.team_b} won on penalties</option>
+                            </select>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -963,7 +946,7 @@ export default function Admin() {
                             </div>
                             <div style={{display:'flex',alignItems:'center',gap:'0.5rem'}}>
                               <span className="match-result-badge">{m.score_a}–{m.score_b}</span>
-                              {m.won_on_penalties && <span style={{fontSize:'0.72rem',color:'var(--gold)',fontWeight:600}}>Won on penalties</span>}
+                              <span style={{fontSize:'0.75rem',color:'var(--gray-400)',fontWeight:500,background:'var(--gray-800)',padding:'0.1rem 0.5rem',borderRadius:'4px'}}>{resultLabel(m)}</span>
                               {!isEditing && (
                                 <>
                                   <button
@@ -973,9 +956,8 @@ export default function Admin() {
                                       setResultForm(prev => ({
                                         ...prev,
                                         [m.id]: {
-                                          result: m.won_on_penalties
-                                            ? (m.result === 'teamA' ? 'teamA_pen' : 'teamB_pen')
-                                            : m.result,
+                                          result: m.won_on_penalties ? 'draw' : m.result,
+                                          penaltyWinner: m.won_on_penalties ? m.result : '',
                                           scoreA: String(m.score_a),
                                           scoreB: String(m.score_b),
                                         }
@@ -1007,7 +989,7 @@ export default function Admin() {
                               {isEditing && (
                                 <button
                                   className="btn btn-ghost btn-sm"
-                                  onClick={() => setEditingMatch(null)}
+                                  onClick={() => { setResultForm(prev => { const n = { ...prev }; delete n[m.id]; return n }); setEditingMatch(null) }}
                                   style={{fontSize:'0.72rem',padding:'0.2rem 0.5rem',color:'var(--gray-500)'}}
                                 >
                                   Cancel
@@ -1018,51 +1000,71 @@ export default function Admin() {
 
                           {/* Inline edit form */}
                           {isEditing && (
-                            <div style={{display:'flex',alignItems:'center',gap:'0.6rem',flexWrap:'wrap'}}>
-                              <select
-                                className="form-select"
-                                style={{flex:'1 1 160px',minWidth:'140px'}}
-                                value={eform.result||''}
-                                onMouseDown={preserveScroll}
-                                onChange={e=>handleResultInput(m.id,'result',e.target.value)}
-                              >
-                                <option value="">— Result —</option>
-                                <option value="teamA">{m.team_a} Win</option>
-                                {m.stage==='Group Stage' && <option value="draw">Draw</option>}
-                                <option value="teamB">{m.team_b} Win</option>
-                                {m.stage!=='Group Stage' && <option value="teamA_pen">{m.team_a} Win (penalties)</option>}
-                                {m.stage!=='Group Stage' && <option value="teamB_pen">{m.team_b} Win (penalties)</option>}
-                              </select>
-                              <div style={{display:'flex',alignItems:'center',gap:'0.4rem'}}>
-                                <input
-                                  className="form-input"
-                                  style={{width:'60px',textAlign:'center'}}
-                                  type="number" min="0"
-                                  placeholder="A"
-                                  value={eform.scoreA??''}
-                                  onChange={e=>handleResultInput(m.id,'scoreA',e.target.value)}
-                                />
-                                <span style={{color:'var(--gray-500)',fontWeight:700}}>–</span>
-                                <input
-                                  className="form-input"
-                                  style={{width:'60px',textAlign:'center'}}
-                                  type="number" min="0"
-                                  placeholder="B"
-                                  value={eform.scoreB??''}
-                                  onChange={e=>handleResultInput(m.id,'scoreB',e.target.value)}
-                                />
+                            <div style={{display:'flex',flexDirection:'column',gap:'0.6rem'}}>
+                              <div style={{display:'flex',alignItems:'center',gap:'0.5rem',fontSize:'0.78rem',color:'var(--gray-400)'}}>
+                                <span style={{fontWeight:600,color:'var(--gold)',letterSpacing:'0.03em',fontSize:'0.7rem',textTransform:'uppercase'}}>Current:</span>
+                                <span className="match-result-badge" style={{opacity:0.7}}>{m.score_a}–{m.score_b}</span>
+                                <span style={{background:'var(--gray-800)',padding:'0.1rem 0.5rem',borderRadius:'4px'}}>{resultLabel(m)}</span>
                               </div>
-                              <button
-                                className="btn btn-primary btn-sm"
-                                style={{minWidth:'80px'}}
-                                disabled={saving[m.id]}
-                                onClick={async () => {
-                                  await saveResult(m, true)
-                                  setEditingMatch(null)
-                                }}
-                              >
-                                {saving[m.id] ? '...' : '✓ Update'}
-                              </button>
+                              <div style={{display:'flex',alignItems:'center',gap:'0.6rem',flexWrap:'wrap'}}>
+                                <select
+                                  className="form-select"
+                                  style={{flex:'1 1 160px',minWidth:'140px'}}
+                                  value={eform.result||''}
+                                  onMouseDown={preserveScroll}
+                                  onChange={e=>handleResultInput(m.id,'result',e.target.value)}
+                                >
+                                  <option value="">— Result —</option>
+                                  <option value="teamA">{m.team_a} Win</option>
+                                  <option value="draw">Draw</option>
+                                  <option value="teamB">{m.team_b} Win</option>
+                                </select>
+                                <div style={{display:'flex',alignItems:'center',gap:'0.3rem'}}>
+                                  <input
+                                    className="form-input"
+                                    style={{width:'56px',textAlign:'center'}}
+                                    type="number" min="0"
+                                    placeholder={m.team_a}
+                                    value={eform.scoreA??''}
+                                    onChange={e=>handleResultInput(m.id,'scoreA',e.target.value)}
+                                  />
+                                  <span style={{color:'var(--gray-500)',fontWeight:700,fontSize:'0.75rem'}}>–</span>
+                                  <input
+                                    className="form-input"
+                                    style={{width:'56px',textAlign:'center'}}
+                                    type="number" min="0"
+                                    placeholder={m.team_b}
+                                    value={eform.scoreB??''}
+                                    onChange={e=>handleResultInput(m.id,'scoreB',e.target.value)}
+                                  />
+                                </div>
+                                <button
+                                  className="btn btn-primary btn-sm"
+                                  style={{minWidth:'80px'}}
+                                  disabled={saving[m.id]}
+                                  onClick={async () => {
+                                    await saveResult(m, true)
+                                    setEditingMatch(null)
+                                  }}
+                                >
+                                  {saving[m.id] ? '...' : '✓ Update'}
+                                </button>
+                              </div>
+                              {eform.result === 'draw' && (
+                                <div style={{display:'flex',alignItems:'center',gap:'0.5rem',paddingLeft:'0.2rem'}}>
+                                  <span style={{fontSize:'0.78rem',color:'var(--gray-400)',whiteSpace:'nowrap'}}>Penalty winner:</span>
+                                  <select
+                                    className="form-select"
+                                    style={{flex:'1 1 200px',minWidth:'160px'}}
+                                    value={eform.penaltyWinner||''}
+                                    onChange={e=>handleResultInput(m.id,'penaltyWinner',e.target.value)}
+                                  >
+                                    <option value="">— No penalties —</option>
+                                    <option value="teamA">{m.team_a} won on penalties</option>
+                                    <option value="teamB">{m.team_b} won on penalties</option>
+                                  </select>
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
