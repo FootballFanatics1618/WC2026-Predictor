@@ -8,6 +8,7 @@ import { ALL_PLAYERS, MATCHES } from '../lib/data'
 import { useDragScroll } from '../hooks/useDragScroll'
 import { recalculateGroupStandings, resolveProgressivePlaceholders } from '../lib/standings'
 import { toIST, getISTDate, matchISTDate, todayIST } from '../lib/flags'
+import { scorePrediction } from '../lib/scoring'
 import { format, parseISO, formatDistanceToNow } from 'date-fns'
 
 const ADMIN_EMAILS = process.env.NEXT_PUBLIC_ADMIN_EMAILS
@@ -231,11 +232,8 @@ export default function Admin() {
     const { data: preds } = await supabase.from('predictions').select('*').eq('match_id', match.id)
     let scoredCount = 0
     for (const pred of (preds || [])) {
-      const rc = pred.predicted_result === match.result
-      const sc = rc && pred.predicted_score_a === match.score_a && pred.predicted_score_b === match.score_b
-      const { error: uErr } = await supabase.from('predictions').update({
-        is_result_correct: rc, is_score_correct: sc, points_earned: sc ? 5 : rc ? 3 : 0,
-      }).eq('id', pred.id)
+      const score = scorePrediction(pred, match)
+      const { error: uErr } = await supabase.from('predictions').update(score).eq('id', pred.id)
       if (!uErr) scoredCount++
     }
     setMessage(`🔄 Re-scored ${match.team_a} ${match.score_a}–${match.score_b} ${match.team_b}: ${scoredCount}/${preds?.length || 0} predictions updated.`)
@@ -252,11 +250,8 @@ export default function Admin() {
       for (const m of completedMatches) {
         const { data: preds } = await supabase.from('predictions').select('*').eq('match_id', m.id)
         for (const pred of (preds || [])) {
-          const rc = pred.predicted_result === m.result
-          const sc = rc && pred.predicted_score_a === m.score_a && pred.predicted_score_b === m.score_b
-          await supabase.from('predictions').update({
-            is_result_correct: rc, is_score_correct: sc, points_earned: sc ? 5 : rc ? 3 : 0,
-          }).eq('id', pred.id)
+          const score = scorePrediction(pred, m)
+          await supabase.from('predictions').update(score).eq('id', pred.id)
           totalScored++
         }
       }
@@ -311,12 +306,10 @@ export default function Admin() {
     // ── 2. Re-score every prediction for this match ──────────────────────────
     const { data: preds } = await supabase.from('predictions').select('*').eq('match_id', match.id)
     let scoredCount = 0
+    const matchForScoring = { ...match, result, score_a: scoreA, score_b: scoreB, won_on_penalties: wonOnPenalties }
     for (const pred of (preds || [])) {
-      const rc = pred.predicted_result === result
-      const sc = rc && pred.predicted_score_a === scoreA && pred.predicted_score_b === scoreB
-      const { error: uErr } = await supabase.from('predictions').update({
-        is_result_correct: rc, is_score_correct: sc, points_earned: sc ? 5 : rc ? 3 : 0,
-      }).eq('id', pred.id)
+      const score = scorePrediction(pred, matchForScoring)
+      const { error: uErr } = await supabase.from('predictions').update(score).eq('id', pred.id)
       if (!uErr) scoredCount++
     }
 
@@ -877,7 +870,7 @@ export default function Admin() {
                           </button>
                         </div>
 
-                        {form.result === 'draw' && (
+                        {form.result === 'draw' && match.stage !== 'Group Stage' && (
                           <div style={{display:'flex',alignItems:'center',gap:'0.5rem',paddingLeft:'0.2rem'}}>
                             <span style={{fontSize:'0.78rem',color:'var(--gray-400)',whiteSpace:'nowrap'}}>Penalty winner:</span>
                             <select
@@ -1050,7 +1043,7 @@ export default function Admin() {
                                   {saving[m.id] ? '...' : '✓ Update'}
                                 </button>
                               </div>
-                              {eform.result === 'draw' && (
+                              {eform.result === 'draw' && m.stage !== 'Group Stage' && (
                                 <div style={{display:'flex',alignItems:'center',gap:'0.5rem',paddingLeft:'0.2rem'}}>
                                   <span style={{fontSize:'0.78rem',color:'var(--gray-400)',whiteSpace:'nowrap'}}>Penalty winner:</span>
                                   <select
@@ -1247,12 +1240,14 @@ export default function Admin() {
                             <span style={{fontFamily:'var(--font-display)',fontSize:'1.05rem',color:'var(--white)',letterSpacing:'0.04em'}}>
                               {pred.predicted_score_a}–{pred.predicted_score_b}
                             </span>
-                            {isCompleted && (
-                              isCorrectScore
-                                ? <span className="points-chip points-5">+5 pts ⚡</span>
-                                : isCorrectResult
-                                  ? <span className="points-chip points-3">+3 pts ✓</span>
-                                  : <span className="points-chip points-0">0 pts</span>
+                            {isCompleted && pred.points_earned > 0 && (
+                              <span className={`points-chip points-${pred.points_earned}`}>
+                                +{pred.points_earned} pt{pred.points_earned > 1 ? 's' : ''}
+                                {pred.points_earned === 5 ? ' ⚡' : pred.points_earned === 4 ? ' 🎯' : pred.points_earned === 3 ? ' ✓' : ''}
+                              </span>
+                            )}
+                            {isCompleted && pred.points_earned === 0 && (
+                              <span className="points-chip points-0">0 pts</span>
                             )}
                           </div>
                         ) : (

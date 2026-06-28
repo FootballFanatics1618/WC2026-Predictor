@@ -7,6 +7,7 @@ import { supabase } from '../lib/supabase'
 import { generateScorelines, TOURNAMENT_START } from '../lib/data'
 import { toIST, isISTToday, isISTPastDay, getISTDate } from '../lib/flags'
 import { isMatchPredictionLocked, timeUntilLock } from '../lib/locktime'
+import { scorePrediction } from '../lib/scoring'
 import { useServerTime } from '../hooks/useServerTime'
 import { useDragScroll } from '../hooks/useDragScroll'
 import { format, parseISO } from 'date-fns'
@@ -447,7 +448,8 @@ export default function Predict() {
       return
     }
     // Map draw_et to the actual predicted_result (penalty winner)
-    const predictedResult = pred.result === 'draw_et' ? penaltyWinners[match.id] : pred.result
+    const predIsDraw = pred.result === 'draw_et'
+    const predictedResult = predIsDraw ? penaltyWinners[match.id] : pred.result
     // Capture scroll position before any state updates
     const scrollY = window.scrollY
     setSaving(s => ({ ...s, [match.id]: true }))
@@ -456,18 +458,18 @@ export default function Predict() {
       predicted_result: predictedResult,
       predicted_score_a: pred.scoreA,
       predicted_score_b: pred.scoreB,
+      predicted_is_draw: predIsDraw,
     }, { onConflict: 'user_id,match_id' })
     if (!error) {
       // If the match is already completed, score the prediction immediately
       let scored = { is_result_correct: null, is_score_correct: null, points_earned: null }
       if (match.result) {
-        const rc = predictedResult === match.result
-        const sc = rc && pred.scoreA === match.score_a && pred.scoreB === match.score_b
-        scored = {
-          is_result_correct: rc,
-          is_score_correct: sc,
-          points_earned: sc ? 5 : rc ? 3 : 0,
-        }
+        scored = scorePrediction({
+          predicted_result: predictedResult,
+          predicted_score_a: pred.scoreA,
+          predicted_score_b: pred.scoreB,
+          predicted_is_draw: predIsDraw,
+        }, match)
         await supabase.from('predictions').update(scored)
           .eq('user_id', user.id).eq('match_id', match.id)
       }
