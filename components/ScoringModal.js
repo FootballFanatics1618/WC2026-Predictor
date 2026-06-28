@@ -40,24 +40,26 @@ export default function ScoringModal({ user }) {
     return 'var(--white)'
   }
 
+  const cellPad = '0.5rem 0.6rem'
+
   function Row({ pts, children }) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', padding: '0.45rem 0.6rem', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', padding: cellPad, borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
         {children}
-        <span style={{ padding: '0.45rem 0.6rem', fontWeight: 700, fontSize: '0.8rem', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', color: ptsColor(pts), flex: '0 0 auto' }}>{pts}</span>
+        <span style={{ flex: '0 0 auto', fontWeight: 700, fontSize: '0.8rem', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', color: ptsColor(pts) }}>{pts}</span>
       </div>
     )
   }
 
   function ColHeader({ children, right }) {
     return (
-      <span style={{ fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--gray-500)', padding: '0.5rem 0.6rem', borderBottom: '1px solid rgba(255,255,255,0.08)', textAlign: right ? 'right' : 'left', flex: right ? '0 0 auto' : 1 }}>{children}</span>
+      <span style={{ flex: right ? '0 0 auto' : 1, padding: cellPad, fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--gray-500)', textAlign: right ? 'right' : 'left', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>{children}</span>
     )
   }
 
   function Cell({ children, bold }) {
     return (
-      <span style={{ fontSize: '0.8rem', color: bold ? 'var(--white)' : 'var(--gray-400)', fontWeight: bold ? 600 : 400, flex: 1, minWidth: 0 }}>{children}</span>
+      <span style={{ flex: 1, minWidth: 0, fontSize: '0.8rem', color: bold ? 'var(--white)' : 'var(--gray-400)', fontWeight: bold ? 600 : 400 }}>{children}</span>
     )
   }
 
