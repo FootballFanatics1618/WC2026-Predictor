@@ -36,9 +36,10 @@ export default function ScoringModal({ user }) {
   const pad = '0.5rem 0.6rem'
 
   const th = { padding: pad, fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--gray-500)' }
-  const td = { padding: pad, fontSize: '0.8rem', color: 'var(--gray-400)', borderBottom: '1px solid rgba(255,255,255,0.04)', whiteSpace: 'nowrap' }
-  const tdBold = { ...td, color: 'var(--white)', fontWeight: 600 }
-  const tdPts = { ...td, fontWeight: 700, fontVariantNumeric: 'tabular-nums', textAlign: 'right' }
+  const td = { padding: pad, fontSize: '0.8rem', color: 'var(--gray-400)', borderBottom: '1px solid rgba(255,255,255,0.04)' }
+  const tdBold = { ...td, color: 'var(--white)', fontWeight: 600, whiteSpace: 'nowrap' }
+  const tdScenario = { padding: pad, fontSize: '0.8rem', color: 'var(--gray-400)', borderBottom: '1px solid rgba(255,255,255,0.04)', overflowWrap: 'break-word' }
+  const tdPts = { ...td, fontWeight: 700, fontVariantNumeric: 'tabular-nums', textAlign: 'right', whiteSpace: 'nowrap' }
 
   function ptsColor(pts) {
     if (pts === '0') return 'var(--gray-600)'
@@ -70,12 +71,12 @@ export default function ScoringModal({ user }) {
             <span style={{ ...th, borderBottom: '1px solid rgba(255,255,255,0.08)' }}>Prediction</span>
             <span style={{ ...th, borderBottom: '1px solid rgba(255,255,255,0.08)' }}>Scenario</span>
             <span style={{ ...th, textAlign: 'right', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>Points</span>
-            <span style={tdBold}>Draw</span><span style={td}>Correct result + correct score</span><span style={{ ...tdPts, color: ptsColor('+5') }}>+5</span>
-            <span style={tdBold}>Draw</span><span style={td}>Correct score, wrong result</span><span style={{ ...tdPts, color: ptsColor('+4') }}>+4</span>
-            <span style={tdBold}>Draw</span><span style={td}>Wrong score, correct result</span><span style={{ ...tdPts, color: ptsColor('+3') }}>+3</span>
-            <span style={tdBold}>Draw</span><span style={td}>Wrong score, wrong result</span><span style={{ ...tdPts, color: ptsColor('+2') }}>+2</span>
-            <span style={tdBold}>Outright</span><span style={td}>Correct result</span><span style={{ ...tdPts, color: ptsColor('+1') }}>+1</span>
-            <span style={tdBold}>Outright</span><span style={{ ...td, borderBottom: '1px solid rgba(255,255,255,0.04)' }}>Wrong result</span><span style={{ ...tdPts, borderBottom: '1px solid rgba(255,255,255,0.04)', color: ptsColor('0') }}>0</span>
+            <span style={tdBold}>Draw</span><span style={tdScenario}>Correct result + correct score</span><span style={{ ...tdPts, color: ptsColor('+5') }}>+5</span>
+            <span style={tdBold}>Draw</span><span style={tdScenario}>Correct score, wrong result</span><span style={{ ...tdPts, color: ptsColor('+4') }}>+4</span>
+            <span style={tdBold}>Draw</span><span style={tdScenario}>Wrong score, correct result</span><span style={{ ...tdPts, color: ptsColor('+3') }}>+3</span>
+            <span style={tdBold}>Draw</span><span style={tdScenario}>Wrong score, wrong result</span><span style={{ ...tdPts, color: ptsColor('+2') }}>+2</span>
+            <span style={tdBold}>Outright</span><span style={tdScenario}>Correct result</span><span style={{ ...tdPts, color: ptsColor('+1') }}>+1</span>
+            <span style={tdBold}>Outright</span><span style={{ ...tdScenario, borderBottom: '1px solid rgba(255,255,255,0.04)' }}>Wrong result</span><span style={{ ...tdPts, borderBottom: '1px solid rgba(255,255,255,0.04)', color: ptsColor('0') }}>0</span>
           </div>
         </div>
 
@@ -86,11 +87,11 @@ export default function ScoringModal({ user }) {
             <span style={{ ...th, borderBottom: '1px solid rgba(255,255,255,0.08)' }}>Prediction</span>
             <span style={{ ...th, borderBottom: '1px solid rgba(255,255,255,0.08)' }}>Scenario</span>
             <span style={{ ...th, textAlign: 'right', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>Points</span>
-            <span style={tdBold}>Outright</span><span style={td}>Correct result + correct score</span><span style={{ ...tdPts, color: ptsColor('+5') }}>+5</span>
-            <span style={tdBold}>Outright</span><span style={td}>Correct result, wrong score</span><span style={{ ...tdPts, color: ptsColor('+3') }}>+3</span>
-            <span style={tdBold}>Outright</span><span style={td}>Wrong result</span><span style={{ ...tdPts, color: ptsColor('0') }}>0</span>
-            <span style={tdBold}>Draw</span><span style={td}>Correct result</span><span style={{ ...tdPts, color: ptsColor('+1') }}>+1</span>
-            <span style={tdBold}>Draw</span><span style={{ ...td, borderBottom: '1px solid rgba(255,255,255,0.04)' }}>Wrong result</span><span style={{ ...tdPts, borderBottom: '1px solid rgba(255,255,255,0.04)', color: ptsColor('0') }}>0</span>
+            <span style={tdBold}>Outright</span><span style={tdScenario}>Correct result + correct score</span><span style={{ ...tdPts, color: ptsColor('+5') }}>+5</span>
+            <span style={tdBold}>Outright</span><span style={tdScenario}>Correct result, wrong score</span><span style={{ ...tdPts, color: ptsColor('+3') }}>+3</span>
+            <span style={tdBold}>Outright</span><span style={tdScenario}>Wrong result</span><span style={{ ...tdPts, color: ptsColor('0') }}>0</span>
+            <span style={tdBold}>Draw</span><span style={tdScenario}>Correct result</span><span style={{ ...tdPts, color: ptsColor('+1') }}>+1</span>
+            <span style={tdBold}>Draw</span><span style={{ ...tdScenario, borderBottom: '1px solid rgba(255,255,255,0.04)' }}>Wrong result</span><span style={{ ...tdPts, borderBottom: '1px solid rgba(255,255,255,0.04)', color: ptsColor('0') }}>0</span>
           </div>
         </div>
 
