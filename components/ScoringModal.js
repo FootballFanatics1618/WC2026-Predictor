@@ -49,12 +49,6 @@ export default function ScoringModal({ user }) {
     )
   }
 
-  function SectionHeader({ label }) {
-    return (
-      <div style={{ padding: '0.35rem 0.6rem', fontSize: '0.75rem', fontWeight: 600, color: 'var(--gray-400)', background: 'rgba(255,255,255,0.03)' }}>{label}</div>
-    )
-  }
-
   function ColHeader({ children, right }) {
     return (
       <span style={{ fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--gray-500)', padding: '0.5rem 0.6rem', borderBottom: '1px solid rgba(255,255,255,0.08)', textAlign: right ? 'right' : 'left', flex: right ? '0 0 auto' : 1 }}>{children}</span>
@@ -92,12 +86,10 @@ export default function ScoringModal({ user }) {
             <ColHeader>Scenario</ColHeader>
             <ColHeader right>Points</ColHeader>
           </div>
-          <SectionHeader label="You predicted DRAW" />
           <Row pts="+5"><Cell bold>Draw</Cell><Cell>Correct result + correct score</Cell></Row>
           <Row pts="+4"><Cell bold>Draw</Cell><Cell>Correct score, wrong result</Cell></Row>
           <Row pts="+3"><Cell bold>Draw</Cell><Cell>Wrong score, correct result</Cell></Row>
           <Row pts="+2"><Cell bold>Draw</Cell><Cell>Wrong score, wrong result</Cell></Row>
-          <SectionHeader label="You predicted OUTRIGHT" />
           <Row pts="+1"><Cell bold>Outright</Cell><Cell>Correct result</Cell></Row>
           <Row pts="0"><Cell bold>Outright</Cell><Cell>Wrong result</Cell></Row>
         </div>
@@ -110,11 +102,9 @@ export default function ScoringModal({ user }) {
             <ColHeader>Scenario</ColHeader>
             <ColHeader right>Points</ColHeader>
           </div>
-          <SectionHeader label="You predicted OUTRIGHT" />
           <Row pts="+5"><Cell bold>Outright</Cell><Cell>Correct result + correct score</Cell></Row>
           <Row pts="+3"><Cell bold>Outright</Cell><Cell>Correct result, wrong score</Cell></Row>
           <Row pts="0"><Cell bold>Outright</Cell><Cell>Wrong result</Cell></Row>
-          <SectionHeader label="You predicted DRAW" />
           <Row pts="+1"><Cell bold>Draw</Cell><Cell>Correct result</Cell></Row>
           <Row pts="0"><Cell bold>Draw</Cell><Cell>Wrong result</Cell></Row>
         </div>
