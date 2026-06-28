@@ -9,6 +9,29 @@ import { ALL_PLAYERS } from '../lib/data'
 import { isGoldenBootLocked, GOLDEN_BOOT_LOCK } from '../lib/locktime'
 import { useServerTime } from '../hooks/useServerTime'
 
+const pad = '0.5rem 0.6rem'
+const th = { padding: pad, fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--gray-500)' }
+const td = { padding: pad, fontSize: '0.8rem', color: 'var(--gray-400)', borderBottom: '1px solid rgba(255,255,255,0.04)' }
+const tdBold = { ...td, color: 'var(--white)', fontWeight: 600, whiteSpace: 'nowrap' }
+const tdScenario = { padding: pad, fontSize: '0.8rem', color: 'var(--gray-400)', borderBottom: '1px solid rgba(255,255,255,0.04)', overflowWrap: 'break-word' }
+const tdPts = { ...td, fontWeight: 700, fontVariantNumeric: 'tabular-nums', textAlign: 'right', whiteSpace: 'nowrap' }
+const sectionTitle = { fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--gold)' }
+
+function ScoringSection({ title, grid, header, subtitle, children }) {
+  return (
+    <div style={{ marginTop: '1rem', background: 'rgba(255,255,255,0.04)', borderRadius: '8px', overflow: 'hidden' }}>
+      <div style={{ ...sectionTitle, padding: pad }}>{title}</div>
+      {subtitle && <div style={{ padding: '0.6rem 0.6rem 0.4rem', fontSize: '0.78rem', color: 'var(--gray-500)' }}>{subtitle}</div>}
+      <div style={{ display: 'grid', gridTemplateColumns: grid }}>
+        {header.map((h, i) => (
+          <span key={i} style={{ ...th, borderBottom: '1px solid rgba(255,255,255,0.08)', textAlign: i === header.length - 1 ? 'right' : 'left' }}>{h}</span>
+        ))}
+        {children}
+      </div>
+    </div>
+  )
+}
+
 export default function Home() {
   const [user, setUser] = useState(null)
   const [profile, setProfile] = useState(null)
@@ -18,6 +41,7 @@ export default function Home() {
   const [gbSaving, setGbSaving] = useState(false)
   const [gbMessage, setGbMessage] = useState('')
   const [gbLocked, setGbLocked] = useState(false)
+  const [scoringTab, setScoringTab] = useState('logic')
   const { serverNow } = useServerTime()
   const dropRef = useRef(null)
   const sortedPlayers = [...ALL_PLAYERS].sort()
@@ -193,8 +217,8 @@ export default function Home() {
           </div>
         )}
 
-        {/* Points explainer */}
-        <div style={{ maxWidth: '700px', margin: '0 auto', padding: '0 1rem' }}>
+        {/* Points overview cards */}
+        <div style={{ maxWidth: '700px', margin: '0 auto 2rem', padding: '0 1rem' }}>
           <div className="grid-3" style={{ marginBottom: '0.75rem' }}>
             <div className="card" style={{ textAlign: 'center' }}>
               <div style={{ fontSize: '1.75rem', marginBottom: '0.4rem' }}>🎯</div>
@@ -229,6 +253,64 @@ export default function Home() {
               <div style={{ fontSize: '0.82rem', color: 'var(--gray-500)' }}>Knockout: correct result only</div>
             </div>
           </div>
+        </div>
+
+        {/* Points explainer */}
+        <div style={{ maxWidth: '560px', margin: '0 auto', padding: '0 1rem', textAlign: 'left' }}>
+          <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', justifyContent: 'center' }}>
+            <button onClick={() => setScoringTab('logic')} style={{ padding: '0.4rem 1rem', fontSize: '0.8rem', fontWeight: 600, borderRadius: '6px', cursor: 'pointer', border: 'none', background: scoringTab === 'logic' ? 'rgba(255,255,255,0.08)' : 'transparent', color: scoringTab === 'logic' ? 'var(--white)' : 'var(--gray-500)', transition: 'all 0.15s' }}>Logic</button>
+            <button onClick={() => setScoringTab('example')} style={{ padding: '0.4rem 1rem', fontSize: '0.8rem', fontWeight: 600, borderRadius: '6px', cursor: 'pointer', border: 'none', background: scoringTab === 'example' ? 'rgba(255,255,255,0.08)' : 'transparent', color: scoringTab === 'example' ? 'var(--white)' : 'var(--gray-500)', transition: 'all 0.15s' }}>Example</button>
+          </div>
+
+          {scoringTab === 'logic' ? (
+            <>
+              <ScoringSection title="Group Stage (unchanged)" grid="1fr auto" header={['Prediction', 'Points']}>
+                <span style={td}>Correct result</span><span style={tdPts}>+3</span>
+                <span style={td}>Correct result + correct score</span><span style={tdPts}>+5</span>
+              </ScoringSection>
+              <ScoringSection title="Knockout — Draw (Penalties)" grid="auto 1fr auto" header={['Prediction', 'Scenario', 'Points']}>
+                <span style={tdBold}>Draw</span><span style={tdScenario}>Correct result + correct winner</span><span style={tdPts}>+5</span>
+                <span style={tdBold}>Draw</span><span style={tdScenario}>Correct score, wrong winner</span><span style={tdPts}>+4</span>
+                <span style={tdBold}>Draw</span><span style={tdScenario}>Wrong score, correct winner</span><span style={tdPts}>+3</span>
+                <span style={tdBold}>Draw</span><span style={tdScenario}>Wrong score, wrong winner</span><span style={tdPts}>+2</span>
+                <span style={tdBold}>Outright</span><span style={tdScenario}>Correct winner</span><span style={tdPts}>+1</span>
+                <span style={tdBold}>Outright</span><span style={tdScenario}>Wrong winner</span><span style={tdPts}>0</span>
+              </ScoringSection>
+              <ScoringSection title="Knockout — Outright Win" grid="auto 1fr auto" header={['Prediction', 'Scenario', 'Points']}>
+                <span style={tdBold}>Outright</span><span style={tdScenario}>Correct result + correct score</span><span style={tdPts}>+5</span>
+                <span style={tdBold}>Outright</span><span style={tdScenario}>Correct result, wrong score</span><span style={tdPts}>+3</span>
+                <span style={tdBold}>Outright</span><span style={tdScenario}>Wrong result</span><span style={tdPts}>0</span>
+                <span style={tdBold}>Draw</span><span style={tdScenario}>Correct winner</span><span style={tdPts}>+1</span>
+                <span style={tdBold}>Draw</span><span style={tdScenario}>Wrong winner</span><span style={tdPts}>0</span>
+              </ScoringSection>
+            </>
+          ) : (
+            <>
+              <ScoringSection title="Group Stage" grid="1fr auto" header={['You picked', 'Points']}
+                subtitle={<>Brazil vs Serbia — <strong>Brazil Win 2-0</strong></>}>
+                <span style={td}>Brazil 2-0 (exact)</span><span style={tdPts}>+5</span>
+                <span style={td}>Brazil 1-0 (right team)</span><span style={tdPts}>+3</span>
+                <span style={td}>Serbia 1-0 (wrong team)</span><span style={tdPts}>0</span>
+              </ScoringSection>
+              <ScoringSection title="Knockout — Draw (Penalties)" grid="auto 1fr auto" header={['You picked', 'What happened', 'Points']}
+                subtitle={<>France vs Argentina — ends <strong>1-1, France win on pens</strong></>}>
+                <span style={tdBold}>Draw 1-1, France</span><span style={tdScenario}>Score ✓ winner ✓</span><span style={tdPts}>+5</span>
+                <span style={tdBold}>Draw 1-1, Argentina</span><span style={tdScenario}>Score ✓ winner ✗</span><span style={tdPts}>+4</span>
+                <span style={tdBold}>Draw 2-2, France</span><span style={tdScenario}>Score ✗ winner ✓</span><span style={tdPts}>+3</span>
+                <span style={tdBold}>Draw 2-2, Argentina</span><span style={tdScenario}>Score ✗ winner ✗</span><span style={tdPts}>+2</span>
+                <span style={tdBold}>France 2-0</span><span style={tdScenario}>Outright — right winner</span><span style={tdPts}>+1</span>
+                <span style={tdBold}>Argentina 3-1</span><span style={tdScenario}>Outright — wrong winner</span><span style={tdPts}>0</span>
+              </ScoringSection>
+              <ScoringSection title="Knockout — Outright Win" grid="auto 1fr auto" header={['You picked', 'What happened', 'Points']}
+                subtitle={<>Brazil vs Croatia — <strong>Brazil win 4-1</strong></>}>
+                <span style={tdBold}>Brazil 4-1</span><span style={tdScenario}>Exact match</span><span style={tdPts}>+5</span>
+                <span style={tdBold}>Brazil 2-0</span><span style={tdScenario}>Right team, wrong score</span><span style={tdPts}>+3</span>
+                <span style={tdBold}>Croatia 1-0</span><span style={tdScenario}>Wrong team</span><span style={tdPts}>0</span>
+                <span style={tdBold}>Draw 1-1, Brazil</span><span style={tdScenario}>Right winner (Brazil)</span><span style={tdPts}>+1</span>
+                <span style={tdBold}>Draw 2-2, Croatia</span><span style={tdScenario}>Wrong winner (Croatia)</span><span style={tdPts}>0</span>
+              </ScoringSection>
+            </>
+          )}
         </div>
       </div>
     </>
