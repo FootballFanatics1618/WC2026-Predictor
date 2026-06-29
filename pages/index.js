@@ -46,16 +46,70 @@ export default function Home() {
   const dropRef = useRef(null)
   const sortedPlayers = [...ALL_PLAYERS].sort()
 
+  // Golden Boot tracker state
+  const [scorers, setScorers] = useState([])
+  const [scorersLoading, setScorersLoading] = useState(false)
+  const [lastSync, setLastSync] = useState(null)
+  const [syncing, setSyncing] = useState(false)
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null)
       if (session?.user) loadProfile(session.user.id)
     })
     setGbLocked(isGoldenBootLocked(serverNow()))
-    // Check every minute if lock time has passed
     const t = setInterval(() => setGbLocked(isGoldenBootLocked(serverNow())), 60000)
     return () => clearInterval(t)
   }, [])
+
+  // Load scorers data
+  useEffect(() => {
+    loadScorers()
+  }, [profile])
+
+  async function loadScorers() {
+    setScorersLoading(true)
+    const [scorersRes, syncRes] = await Promise.all([
+      supabase.from('goal_tracker').select('player_name, goals').order('goals', { ascending: false }).limit(30),
+      supabase.from('sync_meta').select('value').eq('key', 'scorers_last_sync').single(),
+    ])
+    setScorers(scorersRes.data || [])
+    setLastSync(syncRes.data?.value || null)
+    setScorersLoading(false)
+  }
+
+  async function syncScorers() {
+    setSyncing(true)
+    const { error } = await supabase.functions.invoke('sync-scorers')
+    if (!error) await loadScorers()
+    setSyncing(false)
+  }
+
+  function formatSyncTime(iso) {
+    if (!iso || iso === 'never') return null
+    const diff = Date.now() - new Date(iso).getTime()
+    const mins = Math.floor(diff / 60000)
+    if (mins < 1) return 'just now'
+    if (mins < 60) return `${mins}m ago`
+    const hrs = Math.floor(mins / 60)
+    if (hrs < 24) return `${hrs}h ago`
+    return `${Math.floor(hrs / 24)}d ago`
+  }
+
+  function findPickGoals(pick) {
+    if (!pick || !scorers.length) return 0
+    const pickLower = pick.toLowerCase().trim()
+    // Exact match
+    const exact = scorers.find(s => s.player_name.toLowerCase().trim() === pickLower)
+    if (exact) return exact.goals
+    // Last name match
+    const pickLast = pickLower.split(' ').pop()
+    const fuzzy = scorers.find(s => {
+      const name = s.player_name.toLowerCase().trim()
+      return name.includes(pickLast) || pickLower.includes(name.split(' ').pop())
+    })
+    return fuzzy ? fuzzy.goals : 0
+  }
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -213,6 +267,36 @@ export default function Home() {
                   </button>
                 </>
               )}
+
+              {/* Golden Boot live tracker */}
+              {scorers.length > 0 && (
+                <div style={{ marginTop: '1rem', borderTop: '1px solid rgba(245,200,66,0.15)', paddingTop: '0.75rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                    <div style={{ fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--gold)' }}>
+                      🏆 Golden Boot Leader
+                    </div>
+                    <a href="https://footballfanatics1618.github.io/WC2026-Predictor/#tab-golden-boot" target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.78rem', color: 'var(--gold)', textDecoration: 'none', cursor: 'pointer' }}>
+                      View full list →
+                    </a>
+                  </div>
+                  <div style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--white)', marginBottom: '0.25rem' }}>
+                    {scorers[0].player_name} ({scorers[0].goals} goals)
+                  </div>
+                  {profile.golden_boot_pick && (
+                    <div style={{ fontSize: '0.82rem', color: 'var(--gray-500)' }}>
+                      Your pick: <strong>{profile.golden_boot_pick}</strong> ({findPickGoals(profile.golden_boot_pick)} goals)
+                      {scorers[0].goals > findPickGoals(profile.golden_boot_pick) && (
+                        <span style={{ color: 'var(--gold)' }}>
+                          {' — '}{scorers[0].goals - findPickGoals(profile.golden_boot_pick)} behind
+                        </span>
+                      )}
+                      {scorers[0].goals === findPickGoals(profile.golden_boot_pick) && (
+                        <span style={{ color: 'var(--success)' }}> — Tied for lead!</span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -240,12 +324,12 @@ export default function Home() {
             <div className="card" style={{ textAlign: 'center' }}>
               <div style={{ fontSize: '1.75rem', marginBottom: '0.4rem' }}>🔄</div>
               <div style={{ fontWeight: 700, marginBottom: '0.2rem' }}>+4 pts</div>
-              <div style={{ fontSize: '0.82rem', color: 'var(--gray-500)' }}>Correct score, wrong result</div>
+              <div style={{ fontSize: '0.82rem', color: 'var(--gray-500)' }}>Knockout: correct score, wrong result</div>
             </div>
             <div className="card" style={{ textAlign: 'center' }}>
               <div style={{ fontSize: '1.75rem', marginBottom: '0.4rem' }}>🤝</div>
               <div style={{ fontWeight: 700, marginBottom: '0.2rem' }}>+2 pts</div>
-              <div style={{ fontSize: '0.82rem', color: 'var(--gray-500)' }}>Correct draw, wrong score & result</div>
+              <div style={{ fontSize: '0.82rem', color: 'var(--gray-500)' }}>Knockout: correct draw, wrong score & result</div>
             </div>
             <div className="card" style={{ textAlign: 'center' }}>
               <div style={{ fontSize: '1.75rem', marginBottom: '0.4rem' }}>✅</div>

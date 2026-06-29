@@ -994,10 +994,11 @@
     function fmtPct(n) { return n + '%' }
 
     try {
-      const [matchesRes, leaderboardRes, gbRes] = await Promise.all([
+      const [matchesRes, leaderboardRes, gbRes, goalTrackerRes] = await Promise.all([
         supabase.from('matches').select('id, team_a, team_b, score_a, score_b, result, stage, match_date, group_name, kickoff_utc').order('id'),
         supabase.from('league_table').select('id, username, points, correct_results, correct_scorelines'),
-        supabase.from('profiles').select('golden_boot_pick').not('golden_boot_pick', 'is', null)
+        supabase.from('profiles').select('golden_boot_pick').not('golden_boot_pick', 'is', null),
+        supabase.from('goal_tracker').select('player_name, goals').order('goals', { ascending: false })
       ])
 
       // Paginate predictions to bypass PostgREST db-max-rows limit (1000)
@@ -1024,11 +1025,13 @@
       if (matchesRes.error) throw new Error('Matches: ' + matchesRes.error.message)
       if (leaderboardRes.error) throw new Error('Leaderboard: ' + leaderboardRes.error.message)
       if (gbRes.error) throw new Error('Golden Boot: ' + gbRes.error.message)
+      if (goalTrackerRes.error) throw new Error('Goal Tracker: ' + goalTrackerRes.error.message)
 
       const predictions = predsRes.data || []
       const allMatches = matchesRes.data || []
       const leaderboard = leaderboardRes.data || []
       const goldenBootPicks = gbRes.data || []
+      const goalTrackerData = goalTrackerRes.data || []
 
       const usernameMap = {}
       for (const u of leaderboard) {
@@ -1438,6 +1441,42 @@
       html += '<div style="text-align:right;margin-top:0.5rem"><button class="copy-btn" onclick="copySectionToPng(this, \'section-golden-boot\')" title="Copy as PNG">\u{1F4CB}</button></div>'
       html += '</div>'
 
+      // ========== 5b. GOLDEN BOOT LIVE ==========
+      html += '<h2 class="section-title">Golden Boot Live</h2>'
+      html += '<div id="section-golden-boot-live">'
+      html += '<p class="section-subtitle">Current top scorers in the tournament</p>'
+
+      if (goalTrackerData.length === 0) {
+        html += '<div class="no-data">No scorer data available yet.</div>'
+      } else {
+        var topScorers = goalTrackerData.filter(function(p) { return p.goals > 0 }).slice(0, 30)
+        
+        if (topScorers.length === 0) {
+          html += '<div class="no-data">No goals scored yet.</div>'
+        } else {
+          html += '<div class="gb-summary" style="margin-bottom:1rem">'
+          html += '<div>Top scorer: <strong>' + topScorers[0].player_name + ' (' + topScorers[0].goals + ' goals)</strong></div>'
+          html += '<div>Showing top 30 players</div>'
+          html += '</div>'
+          html += '<div class="card">'
+          html += '<table class="stage-table">'
+          html += '<thead><tr><th>#</th><th>Player</th><th style="text-align:right">Goals</th></tr></thead>'
+          html += '<tbody>'
+          for (var gsi = 0; gsi < topScorers.length; gsi++) {
+            var gs = topScorers[gsi]
+            html += '<tr>'
+            html += '<td style="color:var(--gray-500)">' + (gsi + 1) + '</td>'
+            html += '<td class="username">' + gs.player_name + '</td>'
+            html += '<td style="text-align:right;font-weight:700;color:var(--gold)">' + gs.goals + '</td>'
+            html += '</tr>'
+          }
+          html += '</tbody></table>'
+          html += '</div>'
+        }
+      }
+      html += '<div style="text-align:right;margin-top:0.5rem"><button class="copy-btn" onclick="copySectionToPng(this, \'section-golden-boot-live\')" title="Copy as PNG">\u{1F4CB}</button></div>'
+      html += '</div>'
+
       // ========== 6. STAGE BREAKDOWN ==========
       html += '<h2 class="section-title">Stage Breakdown</h2>'
       html += '<div id="section-stage-breakdown">'
@@ -1540,6 +1579,7 @@
         { marker: '<h2 class="section-title">Points Distribution</h2>', panel: 'tab-points' },
         { marker: '<h2 class="section-title">Accuracy Over Time</h2>', panel: 'tab-accuracy' },
         { marker: '<h2 class="section-title">Golden Boot Buzz</h2>', panel: 'tab-golden-boot' },
+        { marker: '<h2 class="section-title">Golden Boot Live</h2>', panel: 'tab-golden-boot' },
         { marker: '<h2 class="section-title">Stage Breakdown</h2>', panel: 'tab-stage' }
       ]
 
@@ -1551,7 +1591,7 @@
         if (endIdx === -1) endIdx = html.length
         var content = html.substring(idx, endIdx).trim()
         var panel = document.getElementById(sec.panel)
-        if (panel) panel.innerHTML = content
+        if (panel) panel.innerHTML += content
       }
 
       // Clear loading state
@@ -1580,6 +1620,12 @@
         tabSelect.addEventListener('change', function() {
           switchTab(tabSelect.value)
         })
+      }
+
+      // Auto-switch tab from URL hash (e.g. #tab-golden-boot)
+      var hash = window.location.hash.replace('#tab-', '').replace('#', '')
+      if (hash) {
+        setTimeout(function() { switchTab(hash) }, 0)
       }
 
       // Attach crowd filter/pagination listeners after DOM is populated
