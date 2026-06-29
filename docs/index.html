@@ -1009,7 +1009,7 @@
           .from('predictions')
           .select(`
             id, user_id, match_id, predicted_result, predicted_score_a, predicted_score_b,
-            is_result_correct, is_score_correct, points_earned,
+            predicted_is_draw, is_result_correct, is_score_correct, points_earned,
             matches!inner(team_a, team_b, score_a, score_b, result, stage, match_date, group_name, id)
           `)
           .range(from, from + pageSize)
@@ -1107,7 +1107,8 @@
 
         var teamACount = 0, drawCount = 0, teamBCount = 0
         for (var j = 0; j < preds.length; j++) {
-          if (preds[j].predicted_result === 'teamA') teamACount++
+          if (preds[j].predicted_is_draw) drawCount++
+          else if (preds[j].predicted_result === 'teamA') teamACount++
           else if (preds[j].predicted_result === 'draw') drawCount++
           else teamBCount++
         }
@@ -1163,7 +1164,7 @@
 
           var resultCorrect = 0
           for (var j4 = 0; j4 < preds.length; j4++) {
-            if (preds[j4].predicted_result === m.result) resultCorrect++
+            if (preds[j4].is_result_correct) resultCorrect++
           }
           var resultPct = Math.round((resultCorrect / total) * 100)
 
@@ -1268,7 +1269,7 @@
         if (utotal === 0 || um.result === null) continue
         var wrongCount = 0
         for (var j2 = 0; j2 < um.predictions.length; j2++) {
-          if (um.predictions[j2].predicted_result !== um.result) wrongCount++
+          if (!um.predictions[j2].is_result_correct) wrongCount++
         }
         upsetData.push({
           teamA: um.teamA, teamB: um.teamB, result: um.result,

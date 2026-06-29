@@ -144,7 +144,7 @@ export default function Knockouts() {
     return (
       <div style={{
         display: 'flex', alignItems: 'center', gap: '5px',
-        color: isWinner ? '#68d391' : '#c5c5bb',
+        color: isWinner ? '#f5c842' : '#c5c5bb',
         fontWeight: isWinner ? 600 : 400,
         whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
         fontSize: '12px', lineHeight: '18px',
@@ -152,7 +152,7 @@ export default function Knockouts() {
         <FlagImg team={name} size={14} />
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', flex: 1 }}>{shortName(name)}</span>
         {score !== null && score !== undefined ? (
-          <span style={{ color: '#f5c842', fontWeight: 700, fontSize: '14px', minWidth: '18px', textAlign: 'right' }}>{score}</span>
+          <span style={{ color: isWinner ? '#f5c842' : '#ffffff', fontWeight: 700, fontSize: '14px', minWidth: '18px', textAlign: 'center' }}>{score}</span>
         ) : (
           <span style={{ color: 'rgba(255,255,255,0.2)', fontSize: '10px', fontWeight: 600, letterSpacing: '0.04em' }}>v</span>
         )}
@@ -166,18 +166,19 @@ export default function Knockouts() {
     const hasResult = match.result && match.score_a !== null && match.score_b !== null
     return (
       <div style={{
-        background: 'rgba(26,26,22,0.85)',
+        background: 'rgba(26, 26, 22, 1)',
         border: '1px solid rgba(255,255,255,0.06)',
         borderLeft: `3px solid ${hasResult ? '#68d391' : 'rgba(255,255,255,0.08)'}`,
-        borderRadius: '3px', padding: '4px 10px',
-        height: '52px', display: 'flex', flexDirection: 'column', justifyContent: 'center',
-        width: '100%',
+        borderRadius: '3px', padding: '8px 10px',
+        display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: '8px',
+        width: '100%', position: 'relative',
       }}>
-        {hasResult && (
-          <div style={{ fontSize: '8px', color: '#68d391', fontWeight: 700, letterSpacing: '0.06em', marginBottom: '1px', textTransform: 'uppercase' }}>
-            Full Time
-          </div>
-        )}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+          {hasResult ? (
+            <span style={{ fontSize: '8px', color: '#68d391', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' }}>FT</span>
+          ) : <span />}
+          <span style={{ fontSize: '7px', color: 'rgba(255,255,255,0.25)', fontWeight: 600, letterSpacing: '0.06em' }}>M{match.id}</span>
+        </div>
         <TeamLine name={match.team_a} score={match.score_a} isWinner={w === 'a'} />
         <TeamLine name={match.team_b} score={match.score_b} isWinner={w === 'b'} />
       </div>
@@ -185,7 +186,7 @@ export default function Knockouts() {
   }
 
   function BracketConnector({ fromRow, toRow, colFrom, colTo }) {
-    const ROW_H = 64
+    const ROW_H = 68
     const topY = (fromRow - 1) * ROW_H + ROW_H / 2
     const botY = (toRow - 1) * ROW_H + ROW_H / 2
     const midY = (topY + botY) / 2
@@ -205,7 +206,7 @@ export default function Knockouts() {
 
   function renderBracketCards() {
     const cards = []
-    const ROW_H = 64
+    const ROW_H = 68
 
     for (let i = 0; i < 16; i++) {
       cards.push(
@@ -447,8 +448,9 @@ export default function Knockouts() {
                 <div style={{
                   display: 'grid',
                   gridTemplateColumns: 'repeat(5, 1fr)',
-                  gridTemplateRows: 'repeat(32, 64px)',
+                  gridTemplateRows: 'repeat(31, 68px)',
                   gap: '0',
+                  margin: '24px 0',
                   alignItems: 'center',
                 }}>
                   {renderBracketCards()}
@@ -464,7 +466,7 @@ export default function Knockouts() {
               }}>
                 <span><span style={{ color: '#68d391', fontWeight: 700 }}>█</span> Winner</span>
                 <span><span style={{ color: '#f5c842', fontWeight: 700 }}>N</span> Score</span>
-                <span><span style={{ color: '#68d391', opacity: 0.5 }}>●</span> Full Time</span>
+                <span><span style={{ color: '#68d391', opacity: 0.5 }}>●</span> FT</span>
                 <span><span style={{ opacity: 0.2 }}>v</span> To be played</span>
               </div>
             </div>

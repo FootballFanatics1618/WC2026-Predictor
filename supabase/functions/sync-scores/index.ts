@@ -360,6 +360,41 @@ Deno.serve(async (req) => {
 // ─── Knockout progression ─────────────────────────────────────────────────────
 // After a knockout match result, update the placeholder text in the next round
 // e.g. "Winner M73" → "France"
+// Uses an explicit bracket map instead of ILIKE queries (which fail when the DB
+// has stale placeholder data from incorrect seed values).
+
+const KNOCKOUT_BRACKET: Record<number, Array<{ matchId: number; field: 'team_a' | 'team_b'; type: 'winner' | 'loser' }>> = {
+  73:  [{ matchId: 90, field: 'team_b', type: 'winner' }],
+  74:  [{ matchId: 92, field: 'team_a', type: 'winner' }],
+  75:  [{ matchId: 90, field: 'team_a', type: 'winner' }],
+  76:  [{ matchId: 93, field: 'team_a', type: 'winner' }],
+  77:  [{ matchId: 92, field: 'team_b', type: 'winner' }],
+  78:  [{ matchId: 89, field: 'team_a', type: 'winner' }],
+  79:  [{ matchId: 91, field: 'team_a', type: 'winner' }],
+  80:  [{ matchId: 91, field: 'team_b', type: 'winner' }],
+  81:  [{ matchId: 94, field: 'team_b', type: 'winner' }],
+  82:  [{ matchId: 94, field: 'team_a', type: 'winner' }],
+  83:  [{ matchId: 93, field: 'team_b', type: 'winner' }],
+  84:  [{ matchId: 89, field: 'team_b', type: 'winner' }],
+  85:  [{ matchId: 96, field: 'team_b', type: 'winner' }],
+  86:  [{ matchId: 95, field: 'team_a', type: 'winner' }],
+  87:  [{ matchId: 96, field: 'team_a', type: 'winner' }],
+  88:  [{ matchId: 95, field: 'team_b', type: 'winner' }],
+  89:  [{ matchId: 97, field: 'team_a', type: 'winner' }],
+  90:  [{ matchId: 97, field: 'team_b', type: 'winner' }],
+  91:  [{ matchId: 99, field: 'team_a', type: 'winner' }],
+  92:  [{ matchId: 99, field: 'team_b', type: 'winner' }],
+  93:  [{ matchId: 98, field: 'team_a', type: 'winner' }],
+  94:  [{ matchId: 98, field: 'team_b', type: 'winner' }],
+  95:  [{ matchId: 100, field: 'team_a', type: 'winner' }],
+  96:  [{ matchId: 100, field: 'team_b', type: 'winner' }],
+  97:  [{ matchId: 101, field: 'team_a', type: 'winner' }],
+  98:  [{ matchId: 101, field: 'team_b', type: 'winner' }],
+  99:  [{ matchId: 102, field: 'team_a', type: 'winner' }],
+  100: [{ matchId: 102, field: 'team_b', type: 'winner' }],
+  101: [{ matchId: 103, field: 'team_a', type: 'loser' }, { matchId: 104, field: 'team_a', type: 'winner' }],
+  102: [{ matchId: 103, field: 'team_b', type: 'loser' }, { matchId: 104, field: 'team_b', type: 'winner' }],
+}
 
 async function resolveKnockoutProgression(
   matchId: number,
@@ -370,24 +405,13 @@ async function resolveKnockoutProgression(
   const winner = result === 'teamA' ? teamA : teamB
   const loser  = result === 'teamA' ? teamB : teamA
 
-  // Find any future match that references this match number in its team fields
-  const { data: futureMathces } = await supabase
-    .from('matches')
-    .select('id, team_a, team_b')
-    .or(`team_a.ilike.%M${matchId}%,team_b.ilike.%M${matchId}%`)
+  const connections = KNOCKOUT_BRACKET[matchId]
+  if (!connections) return
 
-  for (const fm of (futureMathces ?? [])) {
-    const updates: Record<string, string> = {}
-    if (fm.team_a?.includes(`M${matchId}`)) {
-      updates.team_a = fm.team_a.includes('Loser') ? loser : winner
-    }
-    if (fm.team_b?.includes(`M${matchId}`)) {
-      updates.team_b = fm.team_b.includes('Loser') ? loser : winner
-    }
-    if (Object.keys(updates).length > 0) {
-      await supabase.from('matches').update(updates).eq('id', fm.id)
-      console.log(`[sync-scores] Resolved knockout match ${fm.id}:`, updates)
-    }
+  for (const conn of connections) {
+    const resolved = conn.type === 'winner' ? winner : loser
+    await supabase.from('matches').update({ [conn.field]: resolved }).eq('id', conn.matchId)
+    console.log(`[sync-scores] Match ${matchId} → resolved match ${conn.matchId} ${conn.field} = ${resolved}`)
   }
 }
 
@@ -656,4 +680,5 @@ function json(body: unknown, status = 200) {
     status,
     headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
   })
+
 }

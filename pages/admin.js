@@ -255,7 +255,26 @@ export default function Admin() {
           totalScored++
         }
       }
-      setMessage(`✅ Re-scored ${completedMatches.length} matches (${totalScored} predictions).`)
+
+      const stageOrder = ['Round of 32', 'Round of 16', 'Quarter-final', 'Semi-final', '3rd Place Play-off', 'Final']
+
+      // Reset all knockout matches back to original placeholder text so ILIKE can find them
+      const koTemplates = MATCHES.filter(m => m.stage !== 'Group Stage')
+      const resets = koTemplates.map(m =>
+        supabase.from('matches').update({ team_a: m.teamA, team_b: m.teamB }).eq('id', m.id)
+      )
+      await Promise.all(resets)
+
+      // Now re-propagate winners in bracket order
+      const koMatches = completedMatches
+        .filter(m => m.stage !== 'Group Stage')
+        .sort((a, b) => stageOrder.indexOf(a.stage) - stageOrder.indexOf(b.stage))
+      for (const m of koMatches) {
+        await resolveKnockoutProgression(m, m.result)
+      }
+
+      await loadMatches()
+      setMessage(`✅ Re-scored ${completedMatches.length} matches (${totalScored} predictions) and re-propagated ${koMatches.length} knockout results.`)
     } catch (e) {
       setMessage(`❌ Batch re-score failed: ${e.message}`)
     }
@@ -381,20 +400,25 @@ export default function Admin() {
 
     // 4. Revert downstream knockout placeholders
     if (match.stage !== 'Group Stage') {
-      const { data: downstream } = await supabase.from('matches').select('*')
-        .or(`team_a.ilike.%M${match.id}%,team_b.ilike.%M${match.id}%`)
-      for (const dm of (downstream || [])) {
-        const orig = MATCHES.find(m => m.id === dm.id)
-        if (!orig) continue
-        const upd = {}
-        if (dm.team_a && dm.team_a.includes(`M${match.id}`) && dm.team_a !== orig.teamA) {
-          upd.team_a = orig.teamA
-        }
-        if (dm.team_b && dm.team_b.includes(`M${match.id}`) && dm.team_b !== orig.teamB) {
-          upd.team_b = orig.teamB
-        }
-        if (Object.keys(upd).length > 0) {
-          await supabase.from('matches').update(upd).eq('id', dm.id)
+      const downstreamTemplates = MATCHES.filter(m =>
+        m.teamA.includes(`M${match.id}`) || m.teamB.includes(`M${match.id}`)
+      )
+      if (downstreamTemplates.length > 0) {
+        const ids = downstreamTemplates.map(m => m.id)
+        const { data: downstream } = await supabase.from('matches').select('*').in('id', ids)
+        for (const dm of (downstream || [])) {
+          const tmpl = MATCHES.find(m => m.id === dm.id)
+          if (!tmpl) continue
+          const upd = {}
+          if (dm.team_a && dm.team_a.includes(`M${match.id}`) && dm.team_a !== tmpl.teamA) {
+            upd.team_a = tmpl.teamA
+          }
+          if (dm.team_b && dm.team_b.includes(`M${match.id}`) && dm.team_b !== tmpl.teamB) {
+            upd.team_b = tmpl.teamB
+          }
+          if (Object.keys(upd).length > 0) {
+            await supabase.from('matches').update(upd).eq('id', dm.id)
+          }
         }
       }
     }
@@ -412,14 +436,15 @@ export default function Admin() {
     const loser  = result === 'teamA' ? completedMatch.team_b : completedMatch.team_a
     const id = completedMatch.id
 
-    const { data: future } = await supabase.from('matches').select('*')
-      .or(`team_a.ilike.%M${id}%,team_b.ilike.%M${id}%`)
+    const downstreamTemplates = MATCHES.filter(m =>
+      m.teamA.includes(`M${id}`) || m.teamB.includes(`M${id}`)
+    )
 
-    for (const fm of (future || [])) {
+    for (const tmpl of downstreamTemplates) {
       const upd = {}
-      if (fm.team_a && fm.team_a.includes(`M${id}`)) upd.team_a = fm.team_a.includes('Loser') ? loser : winner
-      if (fm.team_b && fm.team_b.includes(`M${id}`)) upd.team_b = fm.team_b.includes('Loser') ? loser : winner
-      if (Object.keys(upd).length > 0) await supabase.from('matches').update(upd).eq('id', fm.id)
+      if (tmpl.teamA.includes(`M${id}`)) upd.team_a = tmpl.teamA.includes('Loser') ? loser : winner
+      if (tmpl.teamB.includes(`M${id}`)) upd.team_b = tmpl.teamB.includes('Loser') ? loser : winner
+      if (Object.keys(upd).length > 0) await supabase.from('matches').update(upd).eq('id', tmpl.id)
     }
   }
 

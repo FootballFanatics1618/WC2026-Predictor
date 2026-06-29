@@ -81,7 +81,8 @@ export default function Others() {
     return profile.username || 'Unknown'
   }
 
-  function getResultLabel(result, teamA, teamB) {
+  function getResultLabel(result, teamA, teamB, isDraw) {
+    if (isDraw) return 'Draw'
     if (result === 'teamA') return `${teamA} Win`
     if (result === 'teamB') return `${teamB} Win`
     if (result === 'draw') return 'Draw'
@@ -184,9 +185,9 @@ export default function Others() {
                   {pred ? (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                        <FlagImg team={pred.predicted_result === 'teamA' ? match.team_a : pred.predicted_result === 'teamB' ? match.team_b : null} size={18} />
+                        <FlagImg team={pred.predicted_is_draw ? null : pred.predicted_result === 'teamA' ? match.team_a : pred.predicted_result === 'teamB' ? match.team_b : null} size={18} />
                         <span style={{ fontSize: '0.9rem', color: 'var(--white)', fontWeight: 500 }}>
-                          {getResultLabel(pred.predicted_result, match.team_a, match.team_b)}
+                          {getResultLabel(pred.predicted_result, match.team_a, match.team_b, pred.predicted_is_draw)}
                         </span>
                       </div>
                       <span style={{ fontFamily: 'var(--font-display)', fontSize: '1.1rem', color: 'var(--white)', letterSpacing: '0.04em' }}>
