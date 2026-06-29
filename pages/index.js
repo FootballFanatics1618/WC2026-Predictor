@@ -295,6 +295,11 @@ export default function Home() {
                       )}
                     </div>
                   )}
+                  {formatSyncTime(lastSync) && (
+                    <div style={{ fontSize: '0.72rem', color: 'var(--gray-500)', marginTop: '0.4rem' }}>
+                      Last synced: {formatSyncTime(lastSync)}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
