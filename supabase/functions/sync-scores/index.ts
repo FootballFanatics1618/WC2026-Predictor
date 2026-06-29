@@ -78,6 +78,21 @@ function normalizeTeam(name: string): string {
   return TEAM_NAME_ALIASES[lower] ?? lower
 }
 
+const GROUP_TEAMS: Record<string, string[]> = {
+  A: ["Mexico", "South Korea", "Czechia", "South Africa"],
+  B: ["Switzerland", "Canada", "Qatar", "Bosnia and Herzegovina"],
+  C: ["Brazil", "Morocco", "Haiti", "Scotland"],
+  D: ["USA", "Turkey", "Australia", "Paraguay"],
+  E: ["Germany", "Ecuador", "Ivory Coast", "Curacao"],
+  F: ["Netherlands", "Japan", "Sweden", "Tunisia"],
+  G: ["Belgium", "Egypt", "Iran", "New Zealand"],
+  H: ["Spain", "Cape Verde", "Saudi Arabia", "Uruguay"],
+  I: ["France", "Senegal", "Iraq", "Norway"],
+  J: ["Argentina", "Algeria", "Austria", "Jordan"],
+  K: ["Portugal", "DR Congo", "Uzbekistan", "Colombia"],
+  L: ["England", "Croatia", "Ghana", "Panama"],
+}
+
 // Proper-cased DB names for all teams — maps normalised API name → DB name
 const GROUP_TEAMS_ALL: string[] = [
   "Mexico","South Korea","Czechia","South Africa",
@@ -423,21 +438,6 @@ async function recalculateGroupStandings() {
     .select('group_name, team_a, team_b, stage, result, score_a, score_b')
     .eq('stage', 'Group Stage')
     .not('result', 'is', null)
-
-  const GROUP_TEAMS: Record<string, string[]> = {
-    A: ["Mexico", "South Korea", "Czechia", "South Africa"],
-    B: ["Switzerland", "Canada", "Qatar", "Bosnia and Herzegovina"],
-    C: ["Brazil", "Morocco", "Haiti", "Scotland"],
-    D: ["USA", "Turkey", "Australia", "Paraguay"],
-    E: ["Germany", "Ecuador", "Ivory Coast", "Curacao"],
-    F: ["Netherlands", "Japan", "Sweden", "Tunisia"],
-    G: ["Belgium", "Egypt", "Iran", "New Zealand"],
-    H: ["Spain", "Cape Verde", "Saudi Arabia", "Uruguay"],
-    I: ["France", "Senegal", "Iraq", "Norway"],
-    J: ["Argentina", "Algeria", "Austria", "Jordan"],
-    K: ["Portugal", "DR Congo", "Uzbekistan", "Colombia"],
-    L: ["England", "Croatia", "Ghana", "Panama"],
-  }
 
   const standings: Record<string, Record<string, { played: number; won: number; drawn: number; lost: number; goals_for: number; goals_against: number; points: number }>> = {}
   for (const [g, teams] of Object.entries(GROUP_TEAMS)) {
