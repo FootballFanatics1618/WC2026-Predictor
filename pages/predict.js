@@ -38,7 +38,7 @@ function MatchCard({ match, saved, localPred, isEditing, isSaving, onResultChang
   const predLocked = isPredLocked(match, now)
   const live = isMatchLive(match)
   const isKnockout = match.stage !== 'Group Stage'
-  const savedIsDrawET = saved && isKnockout && (saved.predicted_is_draw === true || saved.predicted_score_a === saved.predicted_score_b)
+  const savedIsDrawET = saved && isKnockout && saved.predicted_is_draw === true
   const predResult = localPred?.result || (savedIsDrawET ? 'draw_et' : saved?.predicted_result) || null
   const predScoreA = localPred?.scoreA ?? saved?.predicted_score_a
   const predScoreB = localPred?.scoreB ?? saved?.predicted_score_b

@@ -42,6 +42,8 @@ interface ApiMatch {
   time_elapsed: string   // "finished" | "not started" | time string
   home_score: string | number
   away_score: string | number
+  home_penalty_score?: string | number
+  away_penalty_score?: string | number
   home_team_name_en: string
   away_team_name_en: string
   home_team_label?: string
@@ -214,9 +216,10 @@ Deno.serve(async (req) => {
       return json({ source, matchesChecked: log.matched, matchesUpdated: 0, errors: log.errors })
     }
 
-    // Build lookups: by team-name pair AND by label pair (for placeholder resolution)
+    // Build lookups: by team-name pair, by label pair, AND by numeric ID
     const apiMap: Record<string, ApiMatch> = {}
     const apiLabelMap: Record<string, ApiMatch> = {}
+    const apiById: Record<number, ApiMatch> = {}
     for (const m of apiMatches) {
       if (m.home_team_name_en && m.away_team_name_en) {
         const home = normalizeTeam(m.home_team_name_en)
@@ -228,6 +231,8 @@ Deno.serve(async (req) => {
         const lb = normalizeLabel(m.away_team_label)
         apiLabelMap[`${la}|${lb}`] = m
       }
+      const numericId = Number(m.id)
+      if (!isNaN(numericId)) apiById[numericId] = m
     }
 
     // ── Step 2b: Resolve placeholder team names in upcoming knockout matches ──
@@ -255,12 +260,23 @@ Deno.serve(async (req) => {
       console.log(`[sync-scores] Resolved match ${m.id}: ${resolvedA} vs ${resolvedB}`)
     }
 
+    // Re-fetch pending matches after placeholder resolution so team names are current
+    const { data: pendingMatchesFresh, error: reFetchErr } = await supabase
+      .from('matches')
+      .select('id, team_a, team_b, stage, result, kickoff_utc, knockout_slot')
+      .is('result', null)
+      .or(`and(stage.eq.Group Stage,kickoff_utc.lt.${groupCutoff}),and(stage.neq.Group Stage,kickoff_utc.lt.${knockoutCutoff})`)
+      .order('kickoff_utc')
+
+    if (reFetchErr) throw new Error(`DB re-fetch failed: ${reFetchErr.message}`)
+    const effectivePending = pendingMatchesFresh ?? pendingMatches ?? []
+
     // ── Step 3: For each pending DB match, check if API says it's done ───────
-    for (const dbMatch of (pendingMatches ?? []) as DbMatch[]) {
+    for (const dbMatch of effectivePending as DbMatch[]) {
       if (!dbMatch.team_a || !dbMatch.team_b) continue
       const keyAB = `${normalizeTeam(dbMatch.team_a)}|${normalizeTeam(dbMatch.team_b)}`
       const keyBA = `${normalizeTeam(dbMatch.team_b)}|${normalizeTeam(dbMatch.team_a)}`
-      const apiMatch = apiMap[keyAB] ?? apiMap[keyBA]
+      const apiMatch = apiMap[keyAB] ?? apiMap[keyBA] ?? apiById[dbMatch.id]
       // Track whether home/away are swapped so we assign scores correctly
       const swapped = !apiMap[keyAB] && !!apiMap[keyBA]
 
@@ -285,14 +301,25 @@ Deno.serve(async (req) => {
       const home = swapped ? rawAway : rawHome
       const away = swapped ? rawHome : rawAway
 
-      const result = deriveResult(home, away)
+      let result = deriveResult(home, away)
 
-      // Knockout draw = penalties — API can't provide the winner, skip for manual admin entry
+      // Knockout draw = possible penalties — check API penalty score fields
       const isKnockout = dbMatch.stage !== 'Group Stage'
+      let wonOnPenalties = false
       if (isKnockout && home === away) {
-        log.errors.push(`Match ${dbMatch.id}: penalties detected (scores level ${home}-${away}) — requires manual entry`)
-        console.log(`[sync-scores] Match ${dbMatch.id}: skipping penalty match for manual admin entry`)
-        continue
+        const penHome = apiMatch.home_penalty_score != null ? Number(apiMatch.home_penalty_score) : null
+        const penAway = apiMatch.away_penalty_score != null ? Number(apiMatch.away_penalty_score) : null
+        if (penHome !== null && penAway !== null && penHome !== penAway) {
+          // Penalty scores available — override result to penalty winner
+          wonOnPenalties = true
+          result = penHome > penAway ? 'teamA' : 'teamB'
+          console.log(`[sync-scores] Match ${dbMatch.id}: penalties ${penHome}-${penAway}, result: ${result}`)
+        } else {
+          // Penalty scores missing or level — skip for manual admin entry
+          log.errors.push(`Match ${dbMatch.id}: level score ${home}-${away} but no penalty data — requires manual entry`)
+          console.log(`[sync-scores] Match ${dbMatch.id}: skipping penalty match (no penalty score data)`)
+          continue
+        }
       }
 
       // ── Step 4: Write result to DB ─────────────────────────────────────────
@@ -302,6 +329,7 @@ Deno.serve(async (req) => {
           result,
           score_a: home,
           score_b: away,
+          won_on_penalties: wonOnPenalties,
           auto_synced_at: new Date().toISOString(),
           sync_source: 'api',
         })
@@ -313,7 +341,7 @@ Deno.serve(async (req) => {
       }
 
       log.updated++
-      console.log(`[sync-scores] Match ${dbMatch.id}: ${dbMatch.team_a} ${home}–${away} ${dbMatch.team_b} (${result})`)
+      console.log(`[sync-scores] Match ${dbMatch.id}: ${dbMatch.team_a} ${home}–${away} ${dbMatch.team_b} (${result}${wonOnPenalties ? ' pens' : ''})`)
 
       // ── Step 5: Batch-score all predictions via DB function ────────────────
       const { data: scoredCount, error: scoreErr } = await supabase
@@ -364,22 +392,23 @@ Deno.serve(async (req) => {
 // has stale placeholder data from incorrect seed values).
 
 const KNOCKOUT_BRACKET: Record<number, Array<{ matchId: number; field: 'team_a' | 'team_b'; type: 'winner' | 'loser' }>> = {
-  73:  [{ matchId: 90, field: 'team_b', type: 'winner' }],
-  74:  [{ matchId: 92, field: 'team_a', type: 'winner' }],
-  75:  [{ matchId: 90, field: 'team_a', type: 'winner' }],
-  76:  [{ matchId: 93, field: 'team_a', type: 'winner' }],
-  77:  [{ matchId: 92, field: 'team_b', type: 'winner' }],
-  78:  [{ matchId: 89, field: 'team_a', type: 'winner' }],
-  79:  [{ matchId: 91, field: 'team_a', type: 'winner' }],
-  80:  [{ matchId: 91, field: 'team_b', type: 'winner' }],
-  81:  [{ matchId: 94, field: 'team_b', type: 'winner' }],
-  82:  [{ matchId: 94, field: 'team_a', type: 'winner' }],
-  83:  [{ matchId: 93, field: 'team_b', type: 'winner' }],
-  84:  [{ matchId: 89, field: 'team_b', type: 'winner' }],
-  85:  [{ matchId: 96, field: 'team_b', type: 'winner' }],
-  86:  [{ matchId: 95, field: 'team_a', type: 'winner' }],
-  87:  [{ matchId: 96, field: 'team_a', type: 'winner' }],
-  88:  [{ matchId: 95, field: 'team_b', type: 'winner' }],
+  // R32 → R16
+  73:  [{ matchId: 90, field: 'team_a', type: 'winner' }],  // M90 = Winner M73 vs Winner M75
+  74:  [{ matchId: 89, field: 'team_a', type: 'winner' }],  // M89 = Winner M74 vs Winner M77
+  75:  [{ matchId: 90, field: 'team_b', type: 'winner' }],  // M90 = Winner M73 vs Winner M75
+  76:  [{ matchId: 91, field: 'team_a', type: 'winner' }],  // M91 = Winner M76 vs Winner M78
+  77:  [{ matchId: 89, field: 'team_b', type: 'winner' }],  // M89 = Winner M74 vs Winner M77
+  78:  [{ matchId: 91, field: 'team_b', type: 'winner' }],  // M91 = Winner M76 vs Winner M78
+  79:  [{ matchId: 92, field: 'team_a', type: 'winner' }],  // M92 = Winner M79 vs Winner M80
+  80:  [{ matchId: 92, field: 'team_b', type: 'winner' }],  // M92 = Winner M79 vs Winner M80
+  81:  [{ matchId: 94, field: 'team_a', type: 'winner' }],  // M94 = Winner M81 vs Winner M82
+  82:  [{ matchId: 94, field: 'team_b', type: 'winner' }],  // M94 = Winner M81 vs Winner M82
+  83:  [{ matchId: 93, field: 'team_a', type: 'winner' }],  // M93 = Winner M83 vs Winner M84
+  84:  [{ matchId: 93, field: 'team_b', type: 'winner' }],  // M93 = Winner M83 vs Winner M84
+  85:  [{ matchId: 96, field: 'team_a', type: 'winner' }],  // M96 = Winner M85 vs Winner M87
+  86:  [{ matchId: 95, field: 'team_a', type: 'winner' }],  // M95 = Winner M86 vs Winner M88
+  87:  [{ matchId: 96, field: 'team_b', type: 'winner' }],  // M96 = Winner M85 vs Winner M87
+  88:  [{ matchId: 95, field: 'team_b', type: 'winner' }],  // M95 = Winner M86 vs Winner M88
   89:  [{ matchId: 97, field: 'team_a', type: 'winner' }],
   90:  [{ matchId: 97, field: 'team_b', type: 'winner' }],
   91:  [{ matchId: 99, field: 'team_a', type: 'winner' }],
@@ -417,27 +446,27 @@ async function resolveKnockoutProgression(
 
 // ─── Group standings recalculation ────────────────────────────────────────────
 
+const GROUP_TEAMS: Record<string, string[]> = {
+  A: ["Mexico", "South Korea", "Czechia", "South Africa"],
+  B: ["Switzerland", "Canada", "Qatar", "Bosnia and Herzegovina"],
+  C: ["Brazil", "Morocco", "Haiti", "Scotland"],
+  D: ["USA", "Turkey", "Australia", "Paraguay"],
+  E: ["Germany", "Ecuador", "Ivory Coast", "Curacao"],
+  F: ["Netherlands", "Japan", "Sweden", "Tunisia"],
+  G: ["Belgium", "Egypt", "Iran", "New Zealand"],
+  H: ["Spain", "Cape Verde", "Saudi Arabia", "Uruguay"],
+  I: ["France", "Senegal", "Iraq", "Norway"],
+  J: ["Argentina", "Algeria", "Austria", "Jordan"],
+  K: ["Portugal", "DR Congo", "Uzbekistan", "Colombia"],
+  L: ["England", "Croatia", "Ghana", "Panama"],
+}
+
 async function recalculateGroupStandings() {
   const { data: allMatches } = await supabase
     .from('matches')
     .select('group_name, team_a, team_b, stage, result, score_a, score_b')
     .eq('stage', 'Group Stage')
     .not('result', 'is', null)
-
-  const GROUP_TEAMS: Record<string, string[]> = {
-    A: ["Mexico", "South Korea", "Czechia", "South Africa"],
-    B: ["Switzerland", "Canada", "Qatar", "Bosnia and Herzegovina"],
-    C: ["Brazil", "Morocco", "Haiti", "Scotland"],
-    D: ["USA", "Turkey", "Australia", "Paraguay"],
-    E: ["Germany", "Ecuador", "Ivory Coast", "Curacao"],
-    F: ["Netherlands", "Japan", "Sweden", "Tunisia"],
-    G: ["Belgium", "Egypt", "Iran", "New Zealand"],
-    H: ["Spain", "Cape Verde", "Saudi Arabia", "Uruguay"],
-    I: ["France", "Senegal", "Iraq", "Norway"],
-    J: ["Argentina", "Algeria", "Austria", "Jordan"],
-    K: ["Portugal", "DR Congo", "Uzbekistan", "Colombia"],
-    L: ["England", "Croatia", "Ghana", "Panama"],
-  }
 
   const standings: Record<string, Record<string, { played: number; won: number; drawn: number; lost: number; goals_for: number; goals_against: number; points: number }>> = {}
   for (const [g, teams] of Object.entries(GROUP_TEAMS)) {
@@ -486,19 +515,19 @@ const GROUPS_LIST = ['A','B','C','D','E','F','G','H','I','J','K','L']
 
 // FIFA's predetermined assignment: which group's 3rd-place goes to which R32 match
 const BEST_3RD_GROUP_TO_MATCH: Record<string, number> = {
-  B: 82, D: 75, E: 79, F: 78, I: 81, J: 85, K: 80, L: 88,
+  B: 81, D: 74, E: 79, F: 77, I: 82, J: 85, K: 80, L: 87,
 }
 const BEST_3RD_MATCH_IDS = new Set(Object.values(BEST_3RD_GROUP_TO_MATCH))
 // Match ID → original placeholder text (for resetting stale overwrites)
 const BEST_3RD_PLACEHOLDER: Record<number, string> = {
-  75: 'Best 3rd (A/B/C/D/F)',
-  78: 'Best 3rd (C/D/F/G/H)',
-  79: 'Best 3rd (C/E/F/H/I)',
-  80: 'Best 3rd (E/H/I/J/K)',
-  81: 'Best 3rd (A/E/H/I/J)',
-  82: 'Best 3rd (B/E/F/I/J)',
+  74: 'Best 3rd (A/B/C/D/F)',
+  77: 'Best 3rd (C/D/F/G/H)',
+  81: 'Best 3rd (B/E/F/I/J)',
+  82: 'Best 3rd (A/E/H/I/J)',
   85: 'Best 3rd (E/F/G/I/J)',
-  88: 'Best 3rd (D/E/I/J/L)',
+  87: 'Best 3rd (D/E/I/J/L)',
+  80: 'Best 3rd (E/H/I/J/K)',
+  79: 'Best 3rd (C/E/F/H/I)',
 }
 
 interface TeamStats {
@@ -571,6 +600,11 @@ async function resolveGroupPlaceholders() {
       slotMap[`Winner ${g}`] = teams[0].team
       slotMap[`Runner-up ${g}`] = teams[1].team
     }
+    const allGroupPlayed = GROUP_TEAMS[g].every(n => standings[g][n].played === 3)
+    if (allGroupPlayed && !slotMap[`Winner ${g}`]) {
+      slotMap[`Winner ${g}`] = teams[0].team
+      if (teams[1]) slotMap[`Runner-up ${g}`] = teams[1].team
+    }
     if (teams[2]) {
       const allPlayed = GROUP_TEAMS[g].every(n => standings[g][n].played === 3)
       best3rds.push({ team: teams[2].team, group: g, points: teams[2].points, gd: teams[2].gd, gf: teams[2].goals_for, complete: allPlayed })
@@ -618,15 +652,21 @@ async function resolveGroupPlaceholders() {
     updates.push(supabase.from('matches').update({ team_b: t.team }).eq('id', tid))
   }
 
-  // Resolve Winner/Runner-up placeholders via slotMap for non-best-3rd matches
+  // Resolve Winner/Runner-up placeholders via slotMap for all R32 matches
   const bestCopy = [...resolvedThirds]
   for (const m of r32Matches) {
-    if (BEST_3RD_MATCH_IDS.has(m.id)) continue
     const upd: Record<string, string> = {}
+    // Always resolve team_a (Winner/Runner-up slot) for every R32 match
     const newA = resolveGroupSlot(m.team_a, slotMap, bestCopy)
-    const newB = resolveGroupSlot(m.team_b, slotMap, bestCopy)
     if (newA && newA !== m.team_a) upd.team_a = newA
-    if (newB && newB !== m.team_b) upd.team_b = newB
+
+    // For non-best-3rd matches, also resolve team_b
+    // For best-3rd matches, team_b was already resolved by the best-3rd loop above
+    if (!BEST_3RD_MATCH_IDS.has(m.id)) {
+      const newB = resolveGroupSlot(m.team_b, slotMap, bestCopy)
+      if (newB && newB !== m.team_b) upd.team_b = newB
+    }
+
     if (Object.keys(upd).length > 0) updates.push(supabase.from('matches').update(upd).eq('id', m.id))
   }
 

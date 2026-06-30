@@ -233,7 +233,32 @@ test.describe('Section 5 — Edge Cases', () => {
     expect(s.is_score_correct).toBe(true)
   })
 
-  test('5.4 — Draw (Pens) with 0-0 score: correct score + wrong winner = 4pts', () => {
+  test('5.4 — V1 compat: NULL predicted_is_draw + equal scores on knockout pens = outright (1pt)', () => {
+    const pred  = { predicted_result: 'teamA', predicted_score_a: 1, predicted_score_b: 1, predicted_is_draw: null }
+    const match = drawPensMatch(1, 1, 'teamA')
+    const s = scorePrediction(pred, match)
+    expect(s.points_earned).toBe(1)
+    expect(s.is_result_correct).toBe(true)
+  })
+
+  test('5.5 — V1 compat: NULL predicted_is_draw + equal scores on knockout outright = standard 5/3/0', () => {
+    const pred  = { predicted_result: 'teamA', predicted_score_a: 2, predicted_score_b: 2, predicted_is_draw: null }
+    const match = outrightMatch('teamA', 2, 2)
+    const s = scorePrediction(pred, match)
+    expect(s.points_earned).toBe(5)
+    expect(s.is_result_correct).toBe(true)
+    expect(s.is_score_correct).toBe(true)
+  })
+
+  test('5.6 — V1 compat: NULL predicted_is_draw + equal scores on knockout outright, wrong result = 0pts', () => {
+    const pred  = { predicted_result: 'teamB', predicted_score_a: 1, predicted_score_b: 1, predicted_is_draw: null }
+    const match = outrightMatch('teamA', 2, 1)
+    const s = scorePrediction(pred, match)
+    expect(s.points_earned).toBe(0)
+    expect(s.is_result_correct).toBe(false)
+  })
+
+  test('5.7 — Draw (Pens) with 0-0 score: correct score + wrong winner = 4pts', () => {
     const pred  = { predicted_result: 'teamB', predicted_score_a: 0, predicted_score_b: 0, predicted_is_draw: true }
     const match = drawPensMatch(0, 0, 'teamA')
     const s = scorePrediction(pred, match)
