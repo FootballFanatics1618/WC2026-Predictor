@@ -32,6 +32,42 @@ const GROUP_TEAMS = {
   L:["England","Croatia","Ghana","Panama"],
 }
 
+// Explicit bracket map — same as edge function sync-scores/index.ts
+// Maps completed match ID → [{ matchId, field, type }] for downstream updates.
+// This avoids string matching collisions (e.g. "M7" matching "M73").
+const KNOCKOUT_BRACKET = {
+  73:  [{ matchId: 90, field: 'team_a', type: 'winner' }],
+  74:  [{ matchId: 89, field: 'team_a', type: 'winner' }],
+  75:  [{ matchId: 90, field: 'team_b', type: 'winner' }],
+  76:  [{ matchId: 91, field: 'team_a', type: 'winner' }],
+  77:  [{ matchId: 89, field: 'team_b', type: 'winner' }],
+  78:  [{ matchId: 91, field: 'team_b', type: 'winner' }],
+  79:  [{ matchId: 92, field: 'team_a', type: 'winner' }],
+  80:  [{ matchId: 92, field: 'team_b', type: 'winner' }],
+  81:  [{ matchId: 94, field: 'team_a', type: 'winner' }],
+  82:  [{ matchId: 94, field: 'team_b', type: 'winner' }],
+  83:  [{ matchId: 93, field: 'team_a', type: 'winner' }],
+  84:  [{ matchId: 93, field: 'team_b', type: 'winner' }],
+  85:  [{ matchId: 96, field: 'team_a', type: 'winner' }],
+  86:  [{ matchId: 95, field: 'team_a', type: 'winner' }],
+  87:  [{ matchId: 96, field: 'team_b', type: 'winner' }],
+  88:  [{ matchId: 95, field: 'team_b', type: 'winner' }],
+  89:  [{ matchId: 97, field: 'team_a', type: 'winner' }],
+  90:  [{ matchId: 97, field: 'team_b', type: 'winner' }],
+  91:  [{ matchId: 99, field: 'team_a', type: 'winner' }],
+  92:  [{ matchId: 99, field: 'team_b', type: 'winner' }],
+  93:  [{ matchId: 98, field: 'team_a', type: 'winner' }],
+  94:  [{ matchId: 98, field: 'team_b', type: 'winner' }],
+  95:  [{ matchId: 100, field: 'team_a', type: 'winner' }],
+  96:  [{ matchId: 100, field: 'team_b', type: 'winner' }],
+  97:  [{ matchId: 101, field: 'team_a', type: 'winner' }],
+  98:  [{ matchId: 101, field: 'team_b', type: 'winner' }],
+  99:  [{ matchId: 102, field: 'team_a', type: 'winner' }],
+  100: [{ matchId: 102, field: 'team_b', type: 'winner' }],
+  101: [{ matchId: 103, field: 'team_a', type: 'loser' }, { matchId: 104, field: 'team_a', type: 'winner' }],
+  102: [{ matchId: 103, field: 'team_b', type: 'loser' }, { matchId: 104, field: 'team_b', type: 'winner' }],
+}
+
 function resultLabel(match) {
   if (!match.result) return ''
   const isPen = match.won_on_penalties
@@ -82,6 +118,7 @@ export default function Admin() {
   const [syncing, setSyncing]       = useState(false)
   const [recalculating, setRecalculating] = useState(false)
   const [rescoring, setRescoring] = useState(false)
+  const [fixingBracket, setFixingBracket] = useState(false)
   const [syncLog, setSyncLog]       = useState([])
   const [syncLogLoading, setSyncLogLoading] = useState(false)
   const [lastSync, setLastSync]     = useState(null)
@@ -258,14 +295,29 @@ export default function Admin() {
 
       const stageOrder = ['Round of 32', 'Round of 16', 'Quarter-final', 'Semi-final', '3rd Place Play-off', 'Final']
 
-      // Reset all knockout matches back to original placeholder text so ILIKE can find them
-      const koTemplates = MATCHES.filter(m => m.stage !== 'Group Stage')
-      const resets = koTemplates.map(m =>
+      // Reset all R32 matches back to original placeholder text
+      const r32Templates = MATCHES.filter(m => m.stage === 'Round of 32')
+      const resets = r32Templates.map(m =>
         supabase.from('matches').update({ team_a: m.teamA, team_b: m.teamB }).eq('id', m.id)
       )
       await Promise.all(resets)
 
-      // Now re-propagate winners in bracket order
+      // Step A: Re-resolve R32 group-derived placeholders FIRST
+      // (Winner/Runner-up/Best 3rd) so R32 teams are populated before
+      // knockout wins propagate through the bracket.
+      const { data: freshMatches } = await supabase.from('matches').select('*').order('match_date').order('match_time')
+      if (freshMatches) await resolveProgressivePlaceholders(freshMatches)
+
+      // Step B: Also clear stale names from R16+ slots (they'll be re-propagated below)
+      const r16PlusIds = [89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104]
+      const r16Resets = r16PlusIds.map(id => {
+        const tmpl = MATCHES.find(m => m.id === id)
+        if (!tmpl) return null
+        return supabase.from('matches').update({ team_a: tmpl.teamA, team_b: tmpl.teamB }).eq('id', id)
+      }).filter(Boolean)
+      await Promise.all(r16Resets)
+
+      // Step C: Re-propagate winners in bracket order (R32 first, then R16, etc.)
       const koMatches = completedMatches
         .filter(m => m.stage !== 'Group Stage')
         .sort((a, b) => stageOrder.indexOf(a.stage) - stageOrder.indexOf(b.stage))
@@ -279,6 +331,54 @@ export default function Admin() {
       setMessage(`❌ Batch re-score failed: ${e.message}`)
     }
     setRescoring(false)
+  }
+
+  async function fixBracket() {
+    if (!confirm('Re-propagate bracket winners? This will reset R32→R16→QF→SF→Final\nand re-resolve all winners using correct bracket mappings.\nPrediction scores will NOT be affected.')) return
+    setFixingBracket(true)
+    setMessage('')
+    try {
+      const stageOrder = ['Round of 32', 'Round of 16', 'Quarter-final', 'Semi-final', '3rd Place Play-off', 'Final']
+
+      // Step 1: Reset R32 to template placeholders
+      const r32Templates = MATCHES.filter(m => m.stage === 'Round of 32')
+      await Promise.all(r32Templates.map(m =>
+        supabase.from('matches').update({ team_a: m.teamA, team_b: m.teamB }).eq('id', m.id)
+      ))
+
+      // Step 2: Resolve group placeholders (Winner/Runner-up/Best 3rd)
+      // Fetch FRESH data after the reset so the function sees template text like
+      // "Winner E" and resolves it to "Germany" via standings.
+      const { data: fresh1 } = await supabase.from('matches').select('*').order('match_date').order('match_time')
+      if (fresh1) await resolveProgressivePlaceholders(fresh1)
+
+      // Step 3: Reset R16+ slots to template placeholders
+      const r16PlusIdOrder = [89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104]
+      await Promise.all(r16PlusIdOrder.map(id => {
+        const tmpl = MATCHES.find(m => m.id === id)
+        if (!tmpl) return null
+        return supabase.from('matches').update({ team_a: tmpl.teamA, team_b: tmpl.teamB }).eq('id', id)
+      }).filter(Boolean))
+
+      // Step 4: Fetch fresh data again (R32 now resolved, R16+ at templates)
+      const { data: fresh2 } = await supabase.from('matches').select('*').order('match_date').order('match_time')
+      if (!fresh2) throw new Error('Failed to fetch matches')
+
+      // Step 5: Re-propagate in bracket order: R32 → R16 → QF → SF → Final/3rd
+      const koMatches = fresh2
+        .filter(m => m.stage !== 'Group Stage' && m.result !== null)
+        .sort((a, b) => stageOrder.indexOf(a.stage) - stageOrder.indexOf(b.stage))
+
+      for (const m of koMatches) {
+        await resolveKnockoutProgression(m, m.result)
+      }
+
+      await loadMatches()
+      setMessage(`✅ Bracket fixed: ${koMatches.length} knockout results re-propagated through the bracket.`)
+    } catch (e) {
+      setMessage(`❌ Bracket fix failed: ${e.message}`)
+    }
+    setFixingBracket(false)
   }
 
   function handleResultInput(matchId, field, value) {
@@ -398,23 +498,23 @@ export default function Admin() {
       await resolveProgressivePlaceholders(freshMatches || [])
     }
 
-    // 4. Revert downstream knockout placeholders
+    // 4. Revert downstream knockout placeholders via explicit bracket map
     if (match.stage !== 'Group Stage') {
-      const downstreamTemplates = MATCHES.filter(m =>
-        m.teamA.includes(`M${match.id}`) || m.teamB.includes(`M${match.id}`)
-      )
-      if (downstreamTemplates.length > 0) {
-        const ids = downstreamTemplates.map(m => m.id)
-        const { data: downstream } = await supabase.from('matches').select('*').in('id', ids)
+      const connections = KNOCKOUT_BRACKET[match.id]
+      if (connections) {
+        const downstreamIds = [...new Set(connections.map(c => c.matchId))]
+        const { data: downstream } = await supabase.from('matches').select('*').in('id', downstreamIds)
         for (const dm of (downstream || [])) {
           const tmpl = MATCHES.find(m => m.id === dm.id)
           if (!tmpl) continue
           const upd = {}
-          if (dm.team_a && dm.team_a.includes(`M${match.id}`) && dm.team_a !== tmpl.teamA) {
-            upd.team_a = tmpl.teamA
-          }
-          if (dm.team_b && dm.team_b.includes(`M${match.id}`) && dm.team_b !== tmpl.teamB) {
-            upd.team_b = tmpl.teamB
+          for (const conn of connections) {
+            if (conn.matchId !== dm.id) continue
+            const currVal = dm[conn.field]
+            const expected = conn.field === 'team_a' ? tmpl.teamA : tmpl.teamB
+            if (currVal && currVal !== expected) {
+              upd[conn.field] = expected
+            }
           }
           if (Object.keys(upd).length > 0) {
             await supabase.from('matches').update(upd).eq('id', dm.id)
@@ -436,15 +536,12 @@ export default function Admin() {
     const loser  = result === 'teamA' ? completedMatch.team_b : completedMatch.team_a
     const id = completedMatch.id
 
-    const downstreamTemplates = MATCHES.filter(m =>
-      m.teamA.includes(`M${id}`) || m.teamB.includes(`M${id}`)
-    )
+    const connections = KNOCKOUT_BRACKET[id]
+    if (!connections) return
 
-    for (const tmpl of downstreamTemplates) {
-      const upd = {}
-      if (tmpl.teamA.includes(`M${id}`)) upd.team_a = tmpl.teamA.includes('Loser') ? loser : winner
-      if (tmpl.teamB.includes(`M${id}`)) upd.team_b = tmpl.teamB.includes('Loser') ? loser : winner
-      if (Object.keys(upd).length > 0) await supabase.from('matches').update(upd).eq('id', tmpl.id)
+    for (const conn of connections) {
+      const resolved = conn.type === 'winner' ? winner : loser
+      await supabase.from('matches').update({ [conn.field]: resolved }).eq('id', conn.matchId)
     }
   }
 
@@ -596,6 +693,14 @@ export default function Admin() {
                   style={{background:'rgba(255,100,0,0.08)',border:'1px solid rgba(255,100,0,0.3)',color:'#ff8c00'}}
                 >
                   {rescoring ? '⟳ Re-scoring...' : '⚡ Re-score All Matches'}
+                </button>
+                <button
+                  className="btn"
+                  onClick={fixBracket}
+                  disabled={fixingBracket}
+                  style={{background:'rgba(66,153,225,0.08)',border:'1px solid rgba(66,153,225,0.3)',color:'#63b3ed'}}
+                >
+                  {fixingBracket ? '⟳ Fixing...' : '🔧 Fix Bracket'}
                 </button>
                 {lastSync && (
                   <span style={{fontSize:'0.8rem',color:'var(--gray-500)'}}>
@@ -1231,7 +1336,7 @@ export default function Admin() {
                     {isCompleted && <span className="match-result-badge" style={{marginLeft:'0.5rem'}}>{match.score_a}–{match.score_b}</span>}
                   </div>
                   <div style={{fontSize:'0.78rem',color:'var(--gray-500)'}}>
-                    {toIST(match.match_time)}{match.group_name ? ` · Group ${match.group_name}` : ''} · {match.stage}
+                    {toIST(match.match_time, match.kickoff_utc)}{match.group_name ? ` · Group ${match.group_name}` : ''} · {match.stage}
                   </div>
                 </div>
 
@@ -1323,7 +1428,7 @@ export default function Admin() {
                       >
                         <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:'0.5rem',flexWrap:'wrap',gap:'0.4rem'}}>
                           <span style={{fontSize:'0.72rem',fontWeight:600,color:'var(--gray-500)',textTransform:'uppercase',letterSpacing:'0.06em'}}>
-                            {match.stage}{match.group_name ? ` · Group ${match.group_name}` : ''} · {toIST(match.match_time)}
+                            {match.stage}{match.group_name ? ` · Group ${match.group_name}` : ''} · {toIST(match.match_time, match.kickoff_utc)}
                           </span>
                           <div style={{display:'flex',gap:'0.4rem',alignItems:'center'}}>
                             {isCompleted && <span className="match-result-badge">{match.score_a}–{match.score_b}</span>}

@@ -7,19 +7,19 @@ const { test, expect } = require('@playwright/test')
 
 // Pre-determined FIFA assignment: which group's 3rd-place goes to which R32 match
 const BEST_3RD_GROUP_TO_MATCH = {
-  B: 82, D: 75, E: 79, F: 78, I: 81, J: 85, K: 80, L: 88,
+  B: 81, D: 74, E: 79, F: 77, I: 82, J: 85, K: 80, L: 87,
 }
 const BEST_3RD_MATCH_IDS = new Set(Object.values(BEST_3RD_GROUP_TO_MATCH))
 // Match ID → original placeholder text (for resetting stale overwrites)
 const BEST_3RD_PLACEHOLDER = {
-  75: 'Best 3rd (A/B/C/D/F)',
-  78: 'Best 3rd (C/D/F/G/H)',
+  74: 'Best 3rd (A/B/C/D/F)',
+  77: 'Best 3rd (C/D/F/G/H)',
   79: 'Best 3rd (C/E/F/H/I)',
   80: 'Best 3rd (E/H/I/J/K)',
-  81: 'Best 3rd (A/E/H/I/J)',
-  82: 'Best 3rd (B/E/F/I/J)',
+  81: 'Best 3rd (B/E/F/I/J)',
+  82: 'Best 3rd (A/E/H/I/J)',
   85: 'Best 3rd (E/F/G/I/J)',
-  88: 'Best 3rd (D/E/I/J/L)',
+  87: 'Best 3rd (D/E/I/J/L)',
 }
 
 const GROUP_TEAMS = {
@@ -695,14 +695,14 @@ test.describe('Section 6 — Predetermined Best-3rd Group→Match Lookup', () =>
 
     // Simulate the fixture map as used in resolveProgressivePlaceholders
     const r32Fixtures = {
-      75: { id: 75, team_a: 'Germany', team_b: 'Best 3rd (A/B/C/D/F)' },
-      78: { id: 78, team_a: 'France', team_b: 'Best 3rd (C/D/F/G/H)' },
+      74: { id: 74, team_a: 'Germany', team_b: 'Best 3rd (A/B/C/D/F)' },
+      77: { id: 77, team_a: 'France', team_b: 'Best 3rd (C/D/F/G/H)' },
       79: { id: 79, team_a: 'Mexico', team_b: 'Best 3rd (C/E/F/H/I)' },
       80: { id: 80, team_a: 'England', team_b: 'Best 3rd (E/H/I/J/K)' },
-      81: { id: 81, team_a: 'Belgium', team_b: 'Best 3rd (A/E/H/I/J)' },
-      82: { id: 82, team_a: 'USA', team_b: 'Best 3rd (B/E/F/I/J)' },
+      81: { id: 81, team_a: 'USA', team_b: 'Best 3rd (B/E/F/I/J)' },
+      82: { id: 82, team_a: 'Belgium', team_b: 'Best 3rd (A/E/H/I/J)' },
       85: { id: 85, team_a: 'Switzerland', team_b: 'Best 3rd (E/F/G/I/J)' },
-      88: { id: 88, team_a: 'Colombia', team_b: 'Best 3rd (D/E/I/J/L)' },
+      87: { id: 87, team_a: 'Colombia', team_b: 'Best 3rd (D/E/I/J/L)' },
     }
 
     // Assign each qualified team to its predetermined match
@@ -712,27 +712,27 @@ test.describe('Section 6 — Predetermined Best-3rd Group→Match Lookup', () =>
       assignments[mid] = t
     }
 
-    // Verify BBC-correct assignments
-    expect(assignments[75].group).toBe('D')   // Paraguay
-    expect(assignments[78].group).toBe('F')   // Sweden
+    // Verify FIFA-correct assignments
+    expect(assignments[74].group).toBe('D')   // Paraguay
+    expect(assignments[77].group).toBe('F')   // Sweden
     expect(assignments[79].group).toBe('E')   // Ecuador
     expect(assignments[80].group).toBe('K')   // DR Congo
-    expect(assignments[81].group).toBe('I')   // Senegal
-    expect(assignments[82].group).toBe('B')   // Bosnia
+    expect(assignments[81].group).toBe('B')   // Bosnia
+    expect(assignments[82].group).toBe('I')   // Senegal
     expect(assignments[85].group).toBe('J')   // Algeria
-    expect(assignments[88].group).toBe('L')   // Ghana
+    expect(assignments[87].group).toBe('L')   // Ghana
   })
 
   test('6.2 — Stale best-3rd slot gets reset and re-assigned via lookup', () => {
-    // Simulate M75 with stale value (Paraguay should go to M75, not Sweden)
-    const match = { id: 75, team_a: 'Germany', team_b: 'Sweden' }
+    // Simulate M74 with stale value (Paraguay should go to M74, not Sweden)
+    const match = { id: 74, team_a: 'Germany', team_b: 'Sweden' }
 
     // Reset step: restore original placeholder
     const orig = BEST_3RD_PLACEHOLDER[match.id]
     if (orig) match.team_b = orig
     expect(match.team_b).toBe('Best 3rd (A/B/C/D/F)')
 
-    // Resolution via group→match lookup: Paraguay (group D) → M75
+    // Resolution via group→match lookup: Paraguay (group D) → M74
     const qualified = [
       { team: 'DR Congo', group: 'K' },
       { team: 'Sweden', group: 'F' },
@@ -746,8 +746,8 @@ test.describe('Section 6 — Predetermined Best-3rd Group→Match Lookup', () =>
   })
 
   test('6.3 — Stale best-3rd slot for Sweden gets reset and re-assigned', () => {
-    // Simulate M78 with stale value (Sweden should go to M78, not placeholder)
-    const match = { id: 78, team_a: 'France', team_b: 'Best 3rd (C/D/F/G/H)' }
+    // Simulate M77 with stale value (Sweden should go to M77, not placeholder)
+    const match = { id: 77, team_a: 'France', team_b: 'Best 3rd (C/D/F/G/H)' }
 
     // Reset keeps placeholder as-is
     const orig = BEST_3RD_PLACEHOLDER[match.id]
