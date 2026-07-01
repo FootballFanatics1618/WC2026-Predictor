@@ -996,7 +996,7 @@
     try {
       const [matchesRes, leaderboardRes, gbRes, goalTrackerRes] = await Promise.all([
         supabase.from('matches').select('id, team_a, team_b, score_a, score_b, result, stage, match_date, group_name, kickoff_utc').order('id'),
-        supabase.from('league_table').select('id, username, points, correct_results, correct_scorelines'),
+        supabase.from('league_table').select('id, username, points, correct_results, correct_scorelines, no_points, two_pointers, four_pointers'),
         supabase.from('profiles').select('golden_boot_pick').not('golden_boot_pick', 'is', null),
         supabase.from('goal_tracker').select('player_name, goals').order('goals', { ascending: false })
       ])

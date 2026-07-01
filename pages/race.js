@@ -63,17 +63,20 @@ export default function Race() {
       const points    = allPreds.filter(pr => pr.user_id === p.id).reduce((s, pr) => s + (pr.points_earned || 0), 0) + gbBonus
       const cs        = userPreds.filter(pr => pr.is_score_correct).length
       const cr        = userPreds.filter(pr => pr.is_result_correct).length
+      const fp        = userPreds.filter(pr => pr.points_earned === 4).length
       return {
         id: p.id,
         username: p.first_name && p.last_name ? `${p.first_name} ${p.last_name}` : p.username,
         goldenBootCorrect: p.golden_boot_correct || false,
-        points, cs, cr,
+        points, cs, cr, fp,
       }
     })
 
     rows.sort((a, b) => {
       if (b.points !== a.points) return b.points - a.points
+      if (a.goldenBootCorrect !== b.goldenBootCorrect) return a.goldenBootCorrect ? -1 : 1
       if (b.cs !== a.cs) return b.cs - a.cs
+      if (b.fp !== a.fp) return b.fp - a.fp
       if (b.cr !== a.cr) return b.cr - a.cr
       return a.username.localeCompare(b.username)
     })
@@ -132,8 +135,8 @@ export default function Race() {
   }
 
   const cumByPlayer = slicedTable.map((row, pi) => {
-    let pts = 0, cs = 0, cr = 0
-    const ptsArr = [0], csArr = [0], crArr = [0]
+    let pts = 0, cs = 0, cr = 0, fp = 0
+    const ptsArr = [0], csArr = [0], crArr = [0], fpArr = [0]
     for (const bucket of buckets) {
       for (const date of bucket) {
         for (const m of matchesByDate[date]) {
@@ -141,11 +144,12 @@ export default function Race() {
           pts += pred?.points_earned || 0
           cs  += pred?.is_score_correct  ? 1 : 0
           cr  += pred?.is_result_correct ? 1 : 0
+          fp  += pred?.points_earned === 4 ? 1 : 0
         }
       }
-      ptsArr.push(pts); csArr.push(cs); crArr.push(cr)
+      ptsArr.push(pts); csArr.push(cs); crArr.push(cr); fpArr.push(fp)
     }
-    return { id: row.id, name: row.username, ptsArr, csArr, crArr, color: playerColor(pi, row.id) }
+    return { id: row.id, name: row.username, ptsArr, csArr, crArr, fpArr, color: playerColor(pi, row.id) }
   })
 
   const series = cumByPlayer.map(player => {
@@ -154,6 +158,7 @@ export default function Race() {
       const sorted = [...cumByPlayer].sort((a, b) => {
         if (b.ptsArr[i] !== a.ptsArr[i]) return b.ptsArr[i] - a.ptsArr[i]
         if (b.csArr[i]  !== a.csArr[i])  return b.csArr[i]  - a.csArr[i]
+        if (b.fpArr[i]  !== a.fpArr[i])  return b.fpArr[i]  - a.fpArr[i]
         if (b.crArr[i]  !== a.crArr[i])  return b.crArr[i]  - a.crArr[i]
         return a.name.localeCompare(b.name)
       })

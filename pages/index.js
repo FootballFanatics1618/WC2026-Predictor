@@ -62,9 +62,14 @@ export default function Home() {
     return () => clearInterval(t)
   }, [])
 
-  // Load scorers data
+  // Load scorers data — auto-sync if stale (> 30 min), otherwise just load
   useEffect(() => {
-    loadScorers()
+    if (!profile) return
+    if (!lastSync || (Date.now() - new Date(lastSync).getTime()) > 30 * 60 * 1000) {
+      syncScorers()
+    } else {
+      loadScorers()
+    }
   }, [profile])
 
   async function loadScorers() {

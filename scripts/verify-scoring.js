@@ -179,11 +179,16 @@ async function main() {
   const leaderboard = (profiles || []).map(p => {
     const userPreds = predictions.filter(pr => pr.user_id === p.id && pr.match_id !== 9999 && completedMatchIds.has(pr.match_id))
     const matchPreds = predictions.filter(pr => pr.user_id === p.id && pr.match_id !== 9999)
+    const predictedMatchIds = new Set(matchPreds.map(pr => pr.match_id))
+    const missedMatches = [...completedMatchIds].filter(id => !predictedMatchIds.has(id)).length
 
     // Recomputed from scratch
     let computedPts = 0
     let computedCR = 0
     let computedCS = 0
+    let computedFP = 0
+    let computedTP = 0
+    let computedNP = 0
     // Track stored values
     let storedPts = 0
     let storedCR = 0
@@ -202,7 +207,11 @@ async function main() {
       computedPts += s.points_earned || 0
       if (s.is_result_correct) computedCR++
       if (s.is_score_correct) computedCS++
+      if (s.points_earned === 4) computedFP++
+      if (s.points_earned === 2) computedTP++
+      if (s.points_earned === 0) computedNP++
     }
+    computedNP += missedMatches
 
     const name = p.first_name && p.last_name ? `${p.first_name} ${p.last_name}` : (p.first_name || p.username || 'Unknown')
 
@@ -218,22 +227,28 @@ async function main() {
       computedCS,
       storedCS,
       csDiff: computedCS - storedCS,
+      computedFP,
+      computedTP,
+      computedNP,
       mp: userPreds.length,
       totalPreds: matchPreds.length,
     }
   })
 
-  // Sort by computed points (desc), then computed CS (desc), then computed CR (desc)
+  // Sort by computed points (desc), then CS (desc), then FP (desc), then CR (desc)
   leaderboard.sort((a, b) => {
     if (b.computedPts !== a.computedPts) return b.computedPts - a.computedPts
     if (b.computedCS !== a.computedCS) return b.computedCS - a.computedCS
+    if (b.computedFP !== a.computedFP) return b.computedFP - a.computedFP
     if (b.computedCR !== a.computedCR) return b.computedCR - a.computedCR
+    if (b.computedTP !== a.computedTP) return b.computedTP - a.computedTP
+    if (b.computedNP !== a.computedNP) return a.computedNP - b.computedNP
     return a.name.localeCompare(b.name)
   })
 
   // Print header
-  const header = ['Rank', 'Name', 'Computed', 'Stored', '±Pts', 'CR', 'CS', 'MP']
-  const colWidths = [6, 22, 9, 8, 7, 6, 6, 5]
+  const header = ['Rank', 'Name', 'Computed', 'Stored', '±Pts', 'CR', 'CS', 'FP', 'TP', 'NP', 'MP']
+  const colWidths = [6, 22, 9, 8, 7, 6, 6, 5, 5, 5, 5]
 
   function pad(str, width) {
     const s = String(str)
@@ -256,6 +271,9 @@ async function main() {
       r.ptDiff === 0 ? ' 0' : (r.ptDiff > 0 ? `+${r.ptDiff}` : `${r.ptDiff}`),
       r.computedCR,
       r.computedCS,
+      r.computedFP,
+      r.computedTP,
+      r.computedNP,
       r.mp,
     ]
     const line = row.map((v, i) => pad(v, colWidths[i])).join(' │ ')
@@ -288,7 +306,7 @@ async function main() {
       .filter(pr => pr.user_id === u.id && pr.match_id !== 9999)
       .sort((a, b) => a.match_id - b.match_id)
 
-    console.log(`  #${i + 1}: ${u.name} (total: ${u.computedPts} pts, ${u.computedCR} CR, ${u.computedCS} CS, ${u.totalPreds} preds)`)
+    console.log(`  #${i + 1}: ${u.name} (total: ${u.computedPts} pts, CR=${u.computedCR} CS=${u.computedCS} FP=${u.computedFP} TP=${u.computedTP} NP=${u.computedNP}, ${u.totalPreds} preds)`)
 
     let lastStage = ''
     let printedAny = false

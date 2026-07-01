@@ -300,4 +300,22 @@ test.describe('Section 6 — Draw prediction on Outright match', () => {
     expect(s.is_result_correct).toBe(false)
     expect(s.is_score_correct).toBe(false)
   })
+
+  test('6.4 — Predicted draw (2-2) on outright KO (2-0), correct winner = 1pt (not 3!)', () => {
+    const pred  = { predicted_result: 'teamA', predicted_score_a: 2, predicted_score_b: 2, predicted_is_draw: true }
+    const match = outrightMatch('teamA', 2, 0)
+    const s = scorePrediction(pred, match)
+    expect(s.points_earned).toBe(1)
+    expect(s.is_result_correct).toBe(true)
+    expect(s.is_score_correct).toBe(false)
+  })
+
+  test('6.5 — Predicted draw (1-1) on outright KO (2-0), wrong winner = 0pts', () => {
+    const pred  = { predicted_result: 'teamB', predicted_score_a: 1, predicted_score_b: 1, predicted_is_draw: true }
+    const match = outrightMatch('teamA', 2, 0)
+    const s = scorePrediction(pred, match)
+    expect(s.points_earned).toBe(0)
+    expect(s.is_result_correct).toBe(false)
+    expect(s.is_score_correct).toBe(false)
+  })
 })

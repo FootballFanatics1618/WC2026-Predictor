@@ -59,15 +59,21 @@ export default function Leaderboard() {
     const rows = profiles.map(p => {
       const userPreds = (predictions || []).filter(pr => pr.user_id === p.id && pr.match_id !== 9999)
       const gbPred = (predictions || []).find(pr => pr.user_id === p.id && pr.match_id === 9999)
+      const completedMatches = (matches || []).filter(m => m.result !== null && m.id !== 9999)
+      const predictedMatchIds = new Set(userPreds.map(pr => pr.match_id))
+      const missedMatches = completedMatches.filter(m => !predictedMatchIds.has(m.id)).length
       const matchesPredicted = userPreds.length
       const correctResults = userPreds.filter(pr => pr.is_result_correct).length
       const correctScorelines = userPreds.filter(pr => pr.is_score_correct).length
+      const noPoints = userPreds.filter(pr => pr.points_earned === 0).length + missedMatches
+      const twoPointers = userPreds.filter(pr => pr.points_earned === 2).length
+      const fourPointers = userPreds.filter(pr => pr.points_earned === 4).length
       const gbBonus = p.golden_boot_correct ? 10 : 0
       const points = (predictions || []).filter(pr => pr.user_id === p.id).reduce((sum, pr) => sum + (pr.points_earned || 0), 0) + gbBonus
       return {
         id: p.id, username: p.first_name && p.last_name ? `${p.first_name} ${p.last_name}` : p.username, firstName: p.first_name || p.username, goldenBoot: p.golden_boot_pick,
         goldenBootCorrect: p.golden_boot_correct || false,
-        matchesPredicted, correctResults, correctScorelines, points,
+        matchesPredicted, correctResults, correctScorelines, noPoints, twoPointers, fourPointers, points,
       }
     })
 
@@ -75,7 +81,10 @@ export default function Leaderboard() {
       if (b.points !== a.points) return b.points - a.points
       if (a.goldenBootCorrect !== b.goldenBootCorrect) return a.goldenBootCorrect ? -1 : 1
       if (b.correctScorelines !== a.correctScorelines) return b.correctScorelines - a.correctScorelines
-      return b.correctResults - a.correctResults
+      if (b.fourPointers !== a.fourPointers) return b.fourPointers - a.fourPointers
+      if (b.correctResults !== a.correctResults) return b.correctResults - a.correctResults
+      if (b.twoPointers !== a.twoPointers) return b.twoPointers - a.twoPointers
+      return a.noPoints - b.noPoints
     })
 
     setTable(rows)
@@ -450,6 +459,26 @@ export default function Leaderboard() {
           </div>
         )}
 
+        {/* Scoring Legend */}
+        <div className="card" style={{ marginBottom: '1.25rem', padding: '1rem 1.25rem' }}>
+          <div style={{ fontFamily: 'var(--font-display)', fontSize: '0.75rem', color: 'var(--gold)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.75rem' }}>
+            Scoring Guide
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '0.4rem 0.75rem', marginBottom: '0.75rem' }}>
+            <div style={{ fontSize: '0.75rem', color: 'var(--gray-400)' }}><span style={{ color: 'var(--gold)', fontWeight: 600 }}>PTS</span> Points</div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--gray-400)' }}><span style={{ color: 'var(--gray-500)', fontWeight: 600 }}>CS</span> Correct Scoreline (+5)</div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--gray-400)' }}><span style={{ color: 'var(--gray-500)', fontWeight: 600 }}>FP</span> Four Pointer (+4, draw matrix)</div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--gray-400)' }}><span style={{ color: 'var(--gray-500)', fontWeight: 600 }}>CR</span> Correct Result (+3)</div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--gray-400)' }}><span style={{ color: 'var(--gray-500)', fontWeight: 600 }}>TP</span> Two Pointer (+2, draw matrix)</div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--gray-400)' }}><span style={{ color: 'var(--gray-500)', fontWeight: 600 }}>NP</span> No Points (0)</div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--gray-400)' }}><span style={{ color: 'var(--gray-500)', fontWeight: 600 }}>MP</span> Matches Predicted</div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--gray-400)' }}><span style={{ color: 'var(--gold)', fontWeight: 600 }}>GB</span> Golden Boot Pick (+10)</div>
+          </div>
+          <div style={{ fontSize: '0.7rem', color: 'var(--gray-600)', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '0.6rem' }}>
+            Ranking: <span style={{ color: 'var(--gold)' }}>Points</span> → GB → CS → FP → CR → TP → NP
+          </div>
+        </div>
+
         <div className="card">
           {loading ? (
             <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--gray-500)' }}>Loading table...</div>
@@ -461,8 +490,11 @@ export default function Leaderboard() {
                     <th style={{ width: '40px' }}>#</th>
                     <th>Player</th>
                     <th style={{ textAlign: 'center' }}>PTS</th>
-                    <th style={{ textAlign: 'center' }}>CR</th>
                     <th style={{ textAlign: 'center' }}>CS</th>
+                    <th style={{ textAlign: 'center' }}>FP</th>
+                    <th style={{ textAlign: 'center' }}>CR</th>
+                    <th style={{ textAlign: 'center' }}>TP</th>
+                    <th style={{ textAlign: 'center' }}>NP</th>
                     <th style={{ textAlign: 'center' }}>MP</th>
                     <th>GB Pick</th>
                   </tr>
@@ -498,10 +530,13 @@ export default function Leaderboard() {
                           {row.points}
                           <PointsTooltip rowId={row.id} />
                         </td>
-                        <td style={{ textAlign: 'center' }}>{row.correctResults}</td>
-                        <td style={{ textAlign: 'center' }}>{row.correctScorelines}</td>
+                        <td style={{ textAlign: 'center', color: 'var(--gray-500)' }}>{row.correctScorelines}</td>
+                        <td style={{ textAlign: 'center', color: 'var(--gray-500)' }}>{row.fourPointers}</td>
+                        <td style={{ textAlign: 'center', color: 'var(--gray-500)' }}>{row.correctResults}</td>
+                        <td style={{ textAlign: 'center', color: 'var(--gray-500)' }}>{row.twoPointers}</td>
+                        <td style={{ textAlign: 'center', color: 'var(--gray-500)' }}>{row.noPoints}</td>
                         <td style={{ textAlign: 'center', color: 'var(--gray-500)' }}>{row.matchesPredicted}</td>
-                        <td style={{ fontSize: '0.85rem', color: row.goldenBootCorrect ? 'var(--gold)' : 'var(--gray-500)' }}>
+                        <td style={{ fontSize: '0.85rem', color: 'var(--gray-500)' }}>
                           {row.goldenBoot || '—'} {row.goldenBootCorrect && '🥇'}
                         </td>
                       </tr>
@@ -511,15 +546,9 @@ export default function Leaderboard() {
               </table>
             </div>
           )}
-          <p style={{ fontSize: '0.8rem', color: 'var(--gray-500)', marginTop: '1rem' }}>
-            MP = Matches Predicted · CR = Correct Results (+3 pts each) · CS = Correct Scorelines (+2 pts bonus) · GB = Golden Boot Pick (+10 pts bonus)
-          </p>
-          <p style={{ fontSize: '0.8rem', color: 'var(--gray-500)', marginTop: '0.25rem' }}>
-            Ranking: Points → CS → CR (Final day: Points → GB → CS → CR) · Auto-refreshes every 30s
-          </p>
           {lastUpdated && (
-            <p style={{ fontSize: '0.75rem', color: 'var(--gray-700)', marginTop: '0.4rem' }}>
-              Last updated: {lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+            <p style={{ fontSize: '0.75rem', color: 'var(--gray-700)', marginTop: '1rem', marginBottom: '0.5rem', textAlign: 'center' }}>
+              Last updated: {lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })} · Auto-refreshes every 30s
             </p>
           )}
           <div className="scroll-hint">← scroll →</div>
